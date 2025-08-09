@@ -1,1 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="#00bcd4">
+  <path d="M21 6H3a2 2 0 0 0-2 2v3h22V8a2 2 0 0 0-2-2zM1 17a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2v-3H1v3zm4-1h6v2H5v-2z"/>
+</svg>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#00bcd4" d="M21 7H3c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h18V7zm-2 8H5v-6h14v6zM7 9h2v2H7V9z"/></svg>

@@ -4,7 +4,8 @@ import os, sys, functools, json
 from PySide6.QtWidgets import (QApplication, QMainWindow, QMessageBox, QDialog, QLabel,
                                QLineEdit, QFormLayout, QDialogButtonBox, QVBoxLayout,
                                QPushButton, QTableWidget, QTableWidgetItem, QWidget, QHBoxLayout,
-                               QComboBox, QDateEdit, QDoubleSpinBox, QSpinBox, QHeaderView, QAbstractItemView, QTextEdit)
+                               QComboBox, QDateEdit, QDoubleSpinBox, QSpinBox, QHeaderView, QAbstractItemView, QTextEdit,
+                               QAbstractSpinBox, QScrollArea, QTabWidget)
 from PySide6.QtCore import QFile, Qt, QSize, QDate
 from PySide6.QtGui import QIcon, QColor
 from PySide6.QtUiTools import QUiLoader
@@ -165,12 +166,12 @@ class InvoiceDialog(QDialog):
             "upfront_paid": upfront_paid
         }
 
-class AddPaymentDialog(QDialog):
-    def __init__(self, invoice_id, remaining, parent=None):
+class InstallmentPaymentDialog(QDialog):
+    def __init__(self, installment_id, remaining, parent=None):
         super().__init__(parent)
-        self.invoice_id = invoice_id
+        self.installment_id = installment_id
         self.remaining = remaining
-        self.setWindowTitle("إضافة دفعة")
+        self.setWindowTitle("سداد قسط")
         self.setMinimumWidth(400)
 
         # Main layout
@@ -183,16 +184,16 @@ class AddPaymentDialog(QDialog):
         self.amount_input = QDoubleSpinBox()
         self.amount_input.setMaximum(remaining)
         self.amount_input.setMinimum(0.01)
-        self.amount_input.setValue(min(remaining, 1000))  # Default to 1000 or remaining, whichever is smaller
+        self.amount_input.setValue(0.00)  # Default to 0.00 (empty)
         self.amount_input.setDecimals(2)
-        self.amount_input.setSuffix(" د.ع")
+        self.amount_input.setSuffix(" ج.م")
         self.amount_input.setButtonSymbols(QAbstractSpinBox.UpDownArrows)
         
         # Connect value changed to update remaining label
         self.amount_input.valueChanged.connect(self.update_remaining_label)
         
         # Remaining amount label
-        self.lbl_remaining = QLabel(f"المبلغ المتبقي: {remaining:,.2f} د.ع")
+        self.lbl_remaining = QLabel(f"المبلغ المتبقي: {remaining:,.2f} ج.م")
         self.lbl_remaining.setStyleSheet("font-weight: bold; color: #d32f2f;")
         
         # Payment date
@@ -215,7 +216,7 @@ class AddPaymentDialog(QDialog):
         
         # Buttons
         btn_box = QHBoxLayout()
-        btn_ok = QPushButton("حفظ الدفعة")
+        btn_ok = QPushButton("سداد القسط")
         btn_ok.setIcon(icon("save.svg"))
         btn_cancel = QPushButton("إلغاء")
         btn_cancel.setIcon(icon("cancel.svg"))
@@ -230,37 +231,38 @@ class AddPaymentDialog(QDialog):
         
         # Set focus to amount input
         self.amount_input.setFocus()
-        
+
     def update_remaining_label(self, value):
         remaining = self.remaining - value
-        color = "#d32f2f" if remaining > 0 else "#388e3c"  # Red if still remaining, green if paid in full
-        self.lbl_remaining.setText(f"المتبقي بعد الدفع: {remaining:,.2f} د.ع")
-        self.lbl_remaining.setStyleSheet(f"color: {color}; font-weight: bold;")
+        self.lbl_remaining.setText(f"المبلغ المتبقي: {remaining:,.2f} ج.م")
         
+        # Update color based on remaining amount
+        if remaining <= 0:
+            self.lbl_remaining.setStyleSheet("font-weight: bold; color: #388e3c;")
+        else:
+            self.lbl_remaining.setStyleSheet("font-weight: bold; color: #d32f2f;")
+
     def validate_and_accept(self):
         amount = self.amount_input.value()
         if amount <= 0:
-            QMessageBox.warning(self, "خطأ", "يجب إدخال مبلغ أكبر من الصفر")
+            QMessageBox.warning(self, "خطأ", "الرجاء إدخال مبلغ صحيح")
             return
             
-        if amount > self.remaining + 0.01:  # Allow small floating point differences
-            QMessageBox.warning(
-                self, 
-                "خطأ في المبلغ", 
-                f"المبلغ المدخل ({amount:,.2f}) أكبر من المتبقي ({self.remaining:,.2f})"
-            )
+        if amount > self.remaining:
+            QMessageBox.warning(self, "خطأ", "المبلغ المدخل أكبر من المتبقي")
             return
             
         self.accept()
     
     def get_amount(self):
-        return float(self.amount_input.value())
+        return self.amount_input.value()
         
     def get_notes(self):
         return self.notes_input.toPlainText().strip()
         
     def get_payment_date(self):
         return self.date_edit.date().toString("yyyy-MM-dd")
+
 
 class AddInvoiceDialog(QDialog):
     def __init__(self, parent=None):
@@ -328,9 +330,9 @@ class AddInvoiceDialog(QDialog):
         remaining = total - paid
         
         # Update labels
-        self.lbl_total.setText(f"{total:,.2f} د.ع")
-        self.lbl_paid.setText(f"{paid:,.2f} د.ع")
-        self.lbl_remaining.setText(f"{remaining:,.2f} د.ع")
+        self.lbl_total.setText(f"{total:,.2f} ج.م")
+        self.lbl_paid.setText(f"{paid:,.2f} ج.م")
+        self.lbl_remaining.setText(f"{remaining:,.2f} ج.م")
         
         # Update colors based on status
         self.lbl_remaining.setStyleSheet(
@@ -342,8 +344,8 @@ class AddInvoiceDialog(QDialog):
 
     def add_payment(self):
         # Get remaining amount
-        total = float(self.lbl_total.text().replace(" د.ع", "").replace(",", ""))
-        paid = float(self.lbl_paid.text().replace(" د.ع", "").replace(",", ""))
+        total = float(self.lbl_total.text().replace(" ج.م", "").replace(",", ""))
+        paid = float(self.lbl_paid.text().replace(" ج.م", "").replace(",", ""))
         remaining = total - paid
 
         if remaining <= 0:
@@ -425,35 +427,41 @@ class MainApp(QMainWindow):
         self.titleLabel = self.window.findChild(QWidget,"titleLabel")
         self.table_inventory = self.window.findChild(QWidget,"table_inventory")
         self.table_customers = self.window.findChild(QWidget,"table_customers")
-        self.table_installments = self.window.findChild(QWidget,"table_installments")
+
         self.table_alerts = self.window.findChild(QWidget,"table_alerts")
         self.table_reports = self.window.findChild(QWidget,"table_reports")
         self.chartArea = self.window.findChild(QWidget,"chartArea")
         self.table_invoices = self.window.findChild(QWidget,"table_invoices")
-        self.table_invoices.setColumnCount(10)  # Add column for actions
+        if self.table_invoices:
+            self.table_invoices.setColumnCount(10)
 
         self.btn_add_inventory = self.window.findChild(QWidget,"btn_add_inventory")
         self.btn_add_customer = self.window.findChild(QWidget,"btn_add_customer")
         self.btn_add_installment = self.window.findChild(QWidget,"btn_add_installment")
         self.btn_add_invoice = self.window.findChild(QWidget,"btn_add_invoice")
+        # search fields
+        self.search_inventory = self.window.findChild(QWidget, "search_inventory")
+        self.search_customers = self.window.findChild(QWidget, "search_customers")
 
-        # sidebar mapping (include invoices)
-        mapping = {
-            "btn_dashboard": ("page_dashboard", "لوحة التحكم"),
-            "btn_inventory": ("page_inventory", "المخازن"),
-            "btn_customers": ("page_customers", "العملاء"),
-            "btn_installments": ("page_installments", "الأقساط"),
-            "btn_invoices": ("page_invoices", "الفواتير"),
-            "btn_reports": ("page_reports", "التقارير"),
-            "btn_settings": ("page_settings", "الإعدادات")
-        }
-        for bn,(pn,title) in mapping.items():
-            b = self.window.findChild(QWidget,bn); p = self.window.findChild(QWidget,pn)
-            if b and p: b.clicked.connect(functools.partial(self.switch_page,p,title))
+        self.search_invoices = self.window.findChild(QWidget, "search_invoices")
+
+        # sidebar mapping (include invoices) - تم إزالة الربط المزدوج
+        # mapping = {
+        #     "btn_dashboard": ("page_dashboard", "لوحة التحكم"),
+        #     "btn_inventory": ("page_inventory", "المخازن"),
+        #     "btn_customers": ("page_customers", "العملاء"),
+        #     "btn_installments": ("page_installments", "الأقساط"),
+        #     "btn_invoices": ("page_invoices", "الفواتير"),
+        #     "btn_reports": ("page_reports", "التقارير"),
+        #     "btn_settings": ("page_settings", "الإعدادات")
+        # }
+        # for bn,(pn,title) in mapping.items():
+        #     b = self.window.findChild(QWidget,bn); p = self.window.findChild(QWidget,pn)
+        #     if b and p: b.clicked.connect(functools.partial(self.switch_page,p,title))
 
         # logout
         btn_logout = self.window.findChild(QWidget,"btn_logout");
-        if btn_logout: btn_logout.clicked.connect(self.close)
+        if btn_logout: btn_logout.clicked.connect(self.logout)
 
         # icons
         ico_map = {
@@ -466,12 +474,21 @@ class MainApp(QMainWindow):
             "btn_add_inventory": "add.svg",
             "btn_add_customer": "add.svg",
             "btn_add_installment": "add.svg",
-            "btn_add_invoice": "add.svg"
+            "btn_add_invoice": "add.svg",
+            "btn_export_reports": "reports.svg",
+            "btn_backup_db": "save.svg",
+            "btn_restore_backup": "invoice.svg",
+            "btn_choose_backup_dir": "products.svg",
+            "btn_export_inventory_csv": "reports.svg",
+            "btn_export_customers_csv": "reports.svg",
+            "btn_export_installments_csv": "reports.svg",
+            "btn_export_invoices_csv": "reports.svg"
         }
         for k,v in ico_map.items():
             w = self.window.findChild(QWidget,k)
             if w:
-                try: w.setIcon(icon(v)); w.setIconSize(QSize(16,16))
+                try:
+                    w.setIcon(icon(v)); w.setIconSize(QSize(18,18))
                 except: pass
 
         # connect add buttons
@@ -479,6 +496,18 @@ class MainApp(QMainWindow):
         if self.btn_add_customer: self.btn_add_customer.clicked.connect(self.add_customer)
         if self.btn_add_installment: self.btn_add_installment.clicked.connect(self.add_installment)
         if self.btn_add_invoice: self.btn_add_invoice.clicked.connect(self.add_invoice)
+        # connect search
+        if self.search_inventory: self.search_inventory.textChanged.connect(self.refresh_products)
+        if self.search_customers: self.search_customers.textChanged.connect(self.refresh_customers)
+
+        if self.search_invoices: self.search_invoices.textChanged.connect(self.refresh_invoices)
+
+        # export & backup buttons
+        self.btn_export_reports = self.window.findChild(QWidget, "btn_export_reports")
+        if self.btn_export_reports: self.btn_export_reports.clicked.connect(self.export_reports_pdf)
+        self.btn_backup_db = self.window.findChild(QWidget, "btn_backup_db")
+        if self.btn_backup_db: self.btn_backup_db.clicked.connect(self.backup_database)
+        # removed CSV export buttons per request
 
         # settings init
         combo_theme = self.window.findChild(QWidget,"combo_theme")
@@ -492,14 +521,34 @@ class MainApp(QMainWindow):
         btn_save = self.window.findChild(QWidget,"btn_save_settings")
         if btn_save: btn_save.clicked.connect(self.save_settings)
 
+        # backup settings widgets
+        self.combo_backup_interval = self.window.findChild(QWidget, "combo_backup_interval")
+        self.edit_backup_dir = self.window.findChild(QWidget, "edit_backup_dir")
+        self.btn_choose_backup_dir = self.window.findChild(QWidget, "btn_choose_backup_dir")
+        self.btn_restore_backup = self.window.findChild(QWidget, "btn_restore_backup")
+        if self.combo_backup_interval:
+            self.combo_backup_interval.addItem("يدوياً", "manual")
+            self.combo_backup_interval.addItem("يومي", "daily")
+            self.combo_backup_interval.addItem("أسبوعي", "weekly")
+            self.combo_backup_interval.addItem("شهري", "monthly")
+        if self.btn_choose_backup_dir: self.btn_choose_backup_dir.clicked.connect(self.choose_backup_dir)
+        if self.btn_restore_backup: self.btn_restore_backup.clicked.connect(self.restore_backup)
+        # load backup settings from config
+        backup_conf = self.config.get("backup", {"interval":"manual","dir": BASE_DIR})
+        if self.combo_backup_interval:
+            idxb = self.combo_backup_interval.findData(backup_conf.get("interval","manual"))
+            self.combo_backup_interval.setCurrentIndex(idxb if idxb>=0 else 0)
+        if self.edit_backup_dir:
+            self.edit_backup_dir.setText(backup_conf.get("dir", BASE_DIR))
+
         # setup tables (columns)
         self.setup_table(self.table_inventory,["ID","الصنف","الكمية","السعر","العمليات"])
         self.setup_table(self.table_customers,["ID","اسم العميل","الهاتف","ملاحظة","العمليات"])
-        # installments: we'll show invoice id and remaining as columns
-        self.setup_table(self.table_installments,["ID","العميل","المنتج","تاريخ الاستحقاق","المبلغ","مُسدَّد","المتبقي","رقم الفاتورة","العمليات"])
+        # installments: add status and actions columns
+
         self.setup_table(self.table_alerts,["المبلغ","تاريخ الاستحقاق","العميل"])
         self.setup_table(self.window.findChild(QWidget,"table_reports"),["المؤشر","القيمة","ملاحظة"])
-        self.setup_table(self.table_invoices,["ID","العميل","المنتج","الكمية","الإجمالي","المدفوع مقدماً","عدد الشهور","تاريخ الإنشاء","المتبقي"])
+        self.setup_table(self.table_invoices,["ID","العميل","المنتج","الكمية","الإجمالي","المدفوع مقدماً","عدد الشهور","تاريخ الإنشاء","المتبقي","العمليات"])
 
         # add customer filter combobox on installments header (if header exists)
         inst_header = self.window.findChild(QWidget, "instHeader")
@@ -522,12 +571,34 @@ class MainApp(QMainWindow):
                 self.filter_customer_cb = None
 
         # connect double-click on installments to pay
-        if self.table_installments:
-            self.table_installments.cellDoubleClicked.connect(self._on_installment_double)
+
 
         # initial load
         self.refresh_all()
         self.switch_page(self.window.findChild(QWidget,"page_dashboard"), "لوحة التحكم")
+
+        # schedule automatic backup if configured
+        self.schedule_backup_if_needed()
+
+        # أزرار التنقل
+        self.btn_dashboard = self.window.findChild(QWidget, "btn_dashboard")
+        self.btn_inventory = self.window.findChild(QWidget, "btn_inventory")
+        self.btn_customers = self.window.findChild(QWidget, "btn_customers")
+        self.btn_installments = self.window.findChild(QWidget, "btn_installments")
+        self.btn_invoices = self.window.findChild(QWidget, "btn_invoices")
+        self.btn_reports = self.window.findChild(QWidget, "btn_reports")
+        self.btn_settings = self.window.findChild(QWidget, "btn_settings")
+        self.btn_logout = self.window.findChild(QWidget, "btn_logout")
+        
+        # ربط أزرار التنقل
+        if self.btn_dashboard: self.btn_dashboard.clicked.connect(lambda: self.show_page("page_dashboard"))
+        if self.btn_inventory: self.btn_inventory.clicked.connect(lambda: self.show_page("page_inventory"))
+        if self.btn_customers: self.btn_customers.clicked.connect(lambda: self.show_page("page_customers"))
+        if self.btn_installments: self.btn_installments.clicked.connect(lambda: self.show_page("page_installments"))
+        if self.btn_invoices: self.btn_invoices.clicked.connect(lambda: self.show_page("page_invoices"))
+        if self.btn_reports: self.btn_reports.clicked.connect(lambda: self.show_page("page_reports"))
+        if self.btn_settings: self.btn_settings.clicked.connect(lambda: self.show_page("page_settings"))
+        if self.btn_logout: self.btn_logout.clicked.connect(self.logout)
 
     # ---------------- UI / helpers ----------------
     def apply_theme(self, theme, font_size):
@@ -539,13 +610,6 @@ class MainApp(QMainWindow):
             if font_size:
                 app.setStyleSheet(app.styleSheet() + f"""
                     QWidget {{ font-size: {font_size}px; }}
-                    QHeaderView::section {{
-                        color: #fff;
-                        background: #333;
-                        font-weight: bold;
-                        border: none;
-                        padding: 8px;
-                    }}
                 """)
         except Exception as e:
             print("apply_theme error:", e)
@@ -554,15 +618,54 @@ class MainApp(QMainWindow):
         combo_theme = self.window.findChild(QWidget,"combo_theme"); combo_font = self.window.findChild(QWidget,"combo_fontsize")
         if combo_theme and combo_font:
             t = combo_theme.currentData(); s = combo_font.currentData()
-            self.config["theme"] = t; self.config["font_size"] = s; save_config(self.config)
-            self.apply_theme(t, s)
-            QMessageBox.information(self, "نجح", "تم حفظ الإعدادات")
+            self.config["theme"] = t; self.config["font_size"] = s
+        # backup settings
+        if self.combo_backup_interval and self.edit_backup_dir:
+            self.config["backup"] = {
+                "interval": self.combo_backup_interval.currentData() or "manual",
+                "dir": self.edit_backup_dir.text().strip() or BASE_DIR
+            }
+        save_config(self.config)
+        self.apply_theme(self.config.get("theme","light"), self.config.get("font_size",15))
+        QMessageBox.information(self, "نجح", "تم حفظ الإعدادات")
 
     def switch_page(self, page_widget, title):
         idx = self.stacked.indexOf(page_widget);
         if idx>=0: self.stacked.setCurrentIndex(idx)
         lbl = self.window.findChild(QWidget,"titleLabel");
         if lbl: lbl.setText(title)
+
+    def show_page(self, page_name):
+        """عرض صفحة معينة باستخدام اسمها"""
+        page_widget = self.window.findChild(QWidget, page_name)
+        if page_widget:
+            # البحث عن العنوان المناسب من mapping
+            mapping = {
+                "page_dashboard": "لوحة التحكم",
+                "page_inventory": "المخازن",
+                "page_customers": "العملاء",
+                "page_installments": "الأقساط",
+                "page_invoices": "الفواتير",
+                "page_reports": "التقارير",
+                "page_settings": "الإعدادات"
+            }
+            title = mapping.get(page_name, page_name)
+            self.switch_page(page_widget, title)
+            
+            # تحديث البيانات عند تغيير الصفحة
+            if page_name == "page_customers":
+                self.refresh_customers()
+            elif page_name == "page_inventory":
+                self.refresh_products()
+            elif page_name == "page_installments":
+                self.refresh_installments()
+            elif page_name == "page_invoices":
+                self.refresh_invoices()
+            elif page_name == "page_dashboard":
+                self.refresh_dashboard_cards()
+                self.refresh_alerts()
+                # منع تكبير النافذة عند الذهاب للصفحة الرئيسية
+                self.prevent_maximization()
 
     def setup_table(self, table, headers):
         if table is None: return
@@ -580,15 +683,16 @@ class MainApp(QMainWindow):
             Database().execute("INSERT INTO products (name,price,stock) VALUES (?,?,?)", ("غسالة",450.0,4))
         if not Database().fetch_all("SELECT 1 FROM invoices LIMIT 1"):
             # create a sample invoice to have something to show
-            Database().execute("INSERT INTO invoices (customer_id,product_id,quantity,total_amount,installment_count,installment_amount,start_date,created_at) VALUES (?,?,?,?,?,?,?,datetime('now'))", (1,1,1,250.0,5,50.0,"2025-08-09"))
+            Database().execute(
+                "INSERT INTO invoices (customer_id,product_id,quantity,total_amount,upfront_paid,installment_count,installment_amount,start_date,created_at) VALUES (?,?,?,?,?,?,?,?,datetime('now'))",
+                (1,1,1,250.0,0.0,5,50.0,"2025-08-09")
+            )
             invoice_id = Database().fetch_all("SELECT last_insert_rowid()")[0][0]
-            # يمكنك إضافة دفعات أو بيانات أخرى هنا إذا رغبت
 
         # ---------------- refresh / render ----------------
     def refresh_all(self):
         self.refresh_products()
         self.refresh_customers()
-        self.refresh_installments()
         self.refresh_alerts()
         self.refresh_dashboard_cards()
         self.refresh_reports_table()
@@ -596,7 +700,14 @@ class MainApp(QMainWindow):
 
     def refresh_products(self):
         table = self.table_inventory; table.setRowCount(0)
-        rows = Database().fetch_all("SELECT id,name,stock,price FROM products ORDER BY id DESC")
+        params = []
+        query = "SELECT id,name,stock,price FROM products WHERE 1=1"
+        if self.search_inventory and self.search_inventory.text().strip():
+            term = f"%{self.search_inventory.text().strip()}%"
+            query += " AND name LIKE ?"
+            params.append(term)
+        query += " ORDER BY id DESC"
+        rows = Database().fetch_all(query, tuple(params))
         for r,row in enumerate(rows):
             table.insertRow(r)
             table.setItem(r,0,QTableWidgetItem(str(row[0]))); table.setItem(r,1,QTableWidgetItem(row[1])); table.setItem(r,2,QTableWidgetItem(str(row[2]))); table.setItem(r,3,QTableWidgetItem(str(row[3])))
@@ -608,7 +719,14 @@ class MainApp(QMainWindow):
 
     def refresh_customers(self):
         table = self.table_customers; table.setRowCount(0)
-        rows = Database().fetch_all("SELECT id,name,phone,note FROM customers ORDER BY id DESC")
+        params = []
+        query = "SELECT id,name,phone,note FROM customers WHERE 1=1"
+        if self.search_customers and self.search_customers.text().strip():
+            term = f"%{self.search_customers.text().strip()}%"
+            query += " AND (name LIKE ? OR phone LIKE ?)"
+            params.extend([term, term])
+        query += " ORDER BY id DESC"
+        rows = Database().fetch_all(query, tuple(params))
         for r,row in enumerate(rows):
             table.insertRow(r); table.setItem(r,0,QTableWidgetItem(str(row[0]))); table.setItem(r,1,QTableWidgetItem(row[1])); table.setItem(r,2,QTableWidgetItem(row[2] or "")); table.setItem(r,3,QTableWidgetItem(row[3] or ""))
             w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0,0,0,0); h.setSpacing(6)
@@ -621,103 +739,140 @@ class MainApp(QMainWindow):
         table = self.table_installments
         if not table:
             return
-            
         table.setRowCount(0)
-        
-        # Build query with optional customer filter
+
+        # Filters
         params = []
-        query = """
-            SELECT i.id, c.name, p.name, i.due_date, i.amount, 
-                   IFNULL(i.paid, 0) as paid, i.invoice_id
-            FROM installments i
-            LEFT JOIN customers c ON i.customer_id = c.id
-            LEFT JOIN products p ON i.product_id = p.id
-            WHERE 1=1
-        """
-        
-        # Add customer filter if specified
+        where = " WHERE 1=1"
         if hasattr(self, 'filter_customer_cb') and self.filter_customer_cb:
             customer_id = self.filter_customer_cb.currentData()
             if customer_id:
-                query += " AND c.id = ?"
+                where += " AND c.id = ?"
                 params.append(customer_id)
-        
-        # Add ORDER BY clause
-        query += " ORDER BY i.due_date ASC"
-        
-        # Execute query and populate table
-        rows = Database().fetch_all(query, params)
-        
-        for r, row in enumerate(rows):
-            iid = row[0]
-            cust_name = row[1] or ""
-            prod_name = row[2] or ""
-            due_date = row[3] or ""
-            amount = float(row[4] or 0)
-            paid = float(row[5] or 0)
-            invoice_id = row[6]
-            remaining = amount - paid
-            
-            # Insert new row
-            table.insertRow(r)
-            
-            # Set data for each column
-            table.setItem(r, 0, QTableWidgetItem(str(iid)))
-            table.setItem(r, 1, QTableWidgetItem(cust_name))
-            table.setItem(r, 2, QTableWidgetItem(prod_name))
-            table.setItem(r, 3, QTableWidgetItem(due_date))
-            table.setItem(r, 4, QTableWidgetItem(f"{amount:,.2f} د.ع"))
-            table.setItem(r, 5, QTableWidgetItem(f"{paid:,.2f} د.ع"))
-            
-            # Remaining amount with color coding
-            remaining_item = QTableWidgetItem(f"{remaining:,.2f} د.ع")
-            if remaining > 0:
-                remaining_item.setForeground(QColor("#d32f2f"))  # Red for unpaid
-            else:
-                remaining_item.setForeground(QColor("#388e3c"))  # Green for paid
-            table.setItem(r, 6, remaining_item)
-            
-            # Invoice ID
-            table.setItem(r, 7, QTableWidgetItem(str(invoice_id) if invoice_id else ""))
-            
-            # Status
-            status = "مسدد" if remaining <= 0 else "غير مسدد"
-            status_item = QTableWidgetItem(status)
+
+
+        # 1) Aggregated rows for installments linked to an invoice
+        agg_query = f"""
+            SELECT i.invoice_id,
+                   c.id as customer_id,
+                   c.name as customer_name,
+                   p.name as product_name,
+                   MIN(CASE WHEN IFNULL(i.paid,0) < i.amount THEN i.due_date ELSE NULL END) as next_due,
+                   SUM(i.amount) as total_amount,
+                   SUM(IFNULL(i.paid,0)) as total_paid,
+                   COUNT(*) as inst_count
+            FROM installments i
+            LEFT JOIN customers c ON i.customer_id = c.id
+            LEFT JOIN products p ON i.product_id = p.id
+            {where} AND i.invoice_id IS NOT NULL
+            GROUP BY i.invoice_id, c.id, c.name, p.name
+            ORDER BY next_due ASC
+        """
+        agg_rows = Database().fetch_all(agg_query, tuple(params))
+
+        row_index = 0
+        for row in agg_rows:
+            invoice_id = row[0]
+            cust_id = row[1]
+            cust_name = row[2] or ""
+            prod_name = row[3] or ""
+            next_due = row[4] or ""
+            total_amount = float(row[5] or 0)
+            total_paid = float(row[6] or 0)
+            inst_count = int(row[7] or 0)
+            remaining = max(0.0, total_amount - total_paid)
+
+            table.insertRow(row_index)
+            table.setItem(row_index, 0, QTableWidgetItem(f"INV-{invoice_id}"))
+            table.setItem(row_index, 1, QTableWidgetItem(cust_name))
+            table.setItem(row_index, 2, QTableWidgetItem(f"{prod_name} ({inst_count} شهر)"))
+            table.setItem(row_index, 3, QTableWidgetItem(next_due))
+            table.setItem(row_index, 4, QTableWidgetItem(f"{total_amount:,.2f} ج.م"))
+            table.setItem(row_index, 5, QTableWidgetItem(f"{total_paid:,.2f} ج.م"))
+            rem_item = QTableWidgetItem(f"{remaining:,.2f} ج.م")
+            rem_item.setForeground(QColor("#388e3c") if remaining <= 0 else QColor("#d32f2f"))
+            table.setItem(row_index, 6, rem_item)
+            table.setItem(row_index, 7, QTableWidgetItem(str(invoice_id)))
+            status_item = QTableWidgetItem("مسدد" if remaining <= 0 else "غير مسدد")
             status_item.setForeground(QColor("#388e3c") if remaining <= 0 else QColor("#d32f2f"))
-            table.setItem(r, 8, status_item)
-            
-            # Action buttons
-            w = QWidget()
-            h = QHBoxLayout(w)
-            h.setContentsMargins(0, 0, 0, 0)
-            h.setSpacing(6)
-            
-            # Pay button (only if not fully paid)
-            if remaining > 0:
-                btn_pay = QPushButton()
-                btn_pay.setIcon(icon("money.svg"))
-                btn_pay.setToolTip("تسديد القسط")
-                btn_pay.setProperty("class", "table-action")
-                btn_pay.clicked.connect(functools.partial(self.open_pay_dialog, iid))
-                h.addWidget(btn_pay)
-            
-            # View invoice button
-            btn_view = QPushButton()
-            btn_view.setIcon(icon("view.svg"))
-            btn_view.setToolTip("عرض الفاتورة")
-            btn_view.setProperty("class", "table-action")
+            table.setItem(row_index, 8, status_item)
+
+            # Actions (go to payments/details)
+            w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0,0,0,0); h.setSpacing(6)
+            btn_open = QPushButton(); btn_open.setIcon(icon("payments.svg")); btn_open.setToolTip("عرض التفاصيل والدفعات")
+            btn_open.setProperty("class","table-action"); btn_open.setFlat(True); btn_open.setIconSize(QSize(18,18)); btn_open.setFixedSize(30,30)
+            btn_open.clicked.connect(functools.partial(self.view_invoice_payments, invoice_id, cust_name, prod_name))
+            h.addWidget(btn_open)
+            btn_view = QPushButton(); btn_view.setIcon(icon("reports.svg")); btn_view.setToolTip("عرض الفاتورة")
+            btn_view.setProperty("class","table-action"); btn_view.setFlat(True); btn_view.setIconSize(QSize(18,18)); btn_view.setFixedSize(30,30)
             btn_view.clicked.connect(functools.partial(self.show_invoice_details, invoice_id))
             h.addWidget(btn_view)
-            
-            table.setCellWidget(r, 9, w)
-            
-            # Highlight overdue installments
+            table.setCellWidget(row_index, 9, w)
+
+            # Overdue highlight
+            if next_due and QDate.fromString(next_due, "yyyy-MM-dd") < QDate.currentDate() and remaining > 0:
+                for col in range(table.columnCount()):
+                    if table.item(row_index, col):
+                        table.item(row_index, col).setBackground(QColor(255, 200, 200))
+            row_index += 1
+
+        # 2) Orphan installments (no invoice_id): show individually as before
+        orphan_query = f"""
+            SELECT i.id,
+                   c.id as customer_id,
+                   c.name,
+                   p.name,
+                   i.due_date,
+                   i.amount,
+                   IFNULL(i.paid, 0) as paid
+            FROM installments i
+            LEFT JOIN customers c ON i.customer_id = c.id
+            LEFT JOIN products p ON i.product_id = p.id
+            {where} AND i.invoice_id IS NULL
+            ORDER BY i.due_date ASC
+        """
+        orphan_rows = Database().fetch_all(orphan_query, tuple(params))
+        for row in orphan_rows:
+            iid = row[0]
+            cust_id = row[1]
+            cust_name = row[2] or ""
+            prod_name = row[3] or ""
+            due_date = row[4] or ""
+            amount = float(row[5] or 0)
+            paid = float(row[6] or 0)
+            remaining = amount - paid
+
+            table.insertRow(row_index)
+            table.setItem(row_index, 0, QTableWidgetItem(str(iid)))
+            table.setItem(row_index, 1, QTableWidgetItem(cust_name))
+            table.setItem(row_index, 2, QTableWidgetItem(prod_name))
+            table.setItem(row_index, 3, QTableWidgetItem(due_date))
+            table.setItem(row_index, 4, QTableWidgetItem(f"{amount:,.2f} ج.م"))
+            table.setItem(row_index, 5, QTableWidgetItem(f"{paid:,.2f} ج.م"))
+            rem2 = QTableWidgetItem(f"{remaining:,.2f} ج.م")
+            rem2.setForeground(QColor("#388e3c") if remaining <= 0 else QColor("#d32f2f"))
+            table.setItem(row_index, 6, rem2)
+            table.setItem(row_index, 7, QTableWidgetItem(""))
+            status2 = QTableWidgetItem("مسدد" if remaining <= 0 else "غير مسدد")
+            status2.setForeground(QColor("#388e3c") if remaining <= 0 else QColor("#d32f2f"))
+            table.setItem(row_index, 8, status2)
+
+            w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0,0,0,0); h.setSpacing(6)
+            btn_cust = QPushButton(); btn_cust.setIcon(icon("customers.svg")); btn_cust.setToolTip("تفاصيل العميل")
+            btn_cust.setProperty("class","table-action"); btn_cust.setFlat(True); btn_cust.setIconSize(QSize(18,18)); btn_cust.setFixedSize(30,30)
+            btn_cust.clicked.connect(functools.partial(self.show_customer_details, cust_id)); h.addWidget(btn_cust)
+            if remaining > 0:
+                btn_pay = QPushButton(); btn_pay.setIcon(icon("payments.svg")); btn_pay.setToolTip("تسديد القسط")
+                btn_pay.setProperty("class","table-action"); btn_pay.setFlat(True); btn_pay.setIconSize(QSize(18,18)); btn_pay.setFixedSize(30,30)
+                btn_pay.clicked.connect(functools.partial(self.open_pay_dialog, iid)); h.addWidget(btn_pay)
+            table.setCellWidget(row_index, 9, w)
+
             if due_date and QDate.fromString(due_date, "yyyy-MM-dd") < QDate.currentDate() and remaining > 0:
                 for col in range(table.columnCount()):
-                    if table.item(r, col):
-                        table.item(r, col).setBackground(QColor(255, 200, 200))  # Light red for overdue
-        
-        # Resize rows to fit content
+                    if table.item(row_index, col):
+                        table.item(row_index, col).setBackground(QColor(255, 200, 200))
+            row_index += 1
+
         table.resizeRowsToContents()
 
     def view_invoice_payments(self, invoice_id, customer_name, product_name):
@@ -727,7 +882,6 @@ class MainApp(QMainWindow):
         dlg.exec()
         # Refresh invoices to show updated payment status
         self.refresh_invoices()
-        self.refresh_installments()
         self.refresh_alerts()
         self.refresh_dashboard_cards()
 
@@ -748,8 +902,8 @@ class MainApp(QMainWindow):
                 QMessageBox.warning(self, "خطأ", "لم يتم العثور على الفاتورة")
                 return
                 
-            # Convert row to dictionary with column names as keys
-            invoice = dict(zip([d[0] for d in Database().get_cursor().description], rows[0]))
+            # Convert row to dictionary (row_factory=sqlite3.Row)
+            invoice = dict(rows[0])
             
             # Calculate payment summary
             payment_rows = Database().fetch_all(
@@ -772,9 +926,9 @@ class MainApp(QMainWindow):
             # Format currency values with thousand separators
             def format_currency(amount):
                 try:
-                    return f"{float(amount):,.2f} د.ع"
+                    return f"{float(amount):,.2f} ج.م"
                 except (ValueError, TypeError):
-                    return "0.00 د.ع"
+                                         return "0.00 ج.م"
             
             # Create dialog
             dlg = QDialog(self)
@@ -825,7 +979,7 @@ class MainApp(QMainWindow):
             
             # Add view payments button
             btn_view_payments = QPushButton("عرض كافة المدفوعات")
-            btn_view_payments.setIcon(icon("money.svg"))
+            btn_view_payments.setIcon(icon("payments.svg"))
             btn_view_payments.clicked.connect(
                 lambda: self.view_invoice_payments(
                     invoice_id,
@@ -847,7 +1001,7 @@ class MainApp(QMainWindow):
             
             # Show dialog
             dlg.setLayout(layout)
-            dlg.exec_()
+            dlg.exec()
             
         except Exception as e:
             QMessageBox.critical(
@@ -858,7 +1012,16 @@ class MainApp(QMainWindow):
 
     def refresh_alerts(self):
         table = self.table_alerts; table.setRowCount(0)
-        rows = Database().fetch_all("SELECT i.amount, i.due_date, c.name FROM installments i LEFT JOIN customers c ON i.customer_id=c.id WHERE IFNULL(i.paid,0)=0 ORDER BY i.due_date LIMIT 50")
+        rows = Database().fetch_all(
+            """
+            SELECT i.amount, i.due_date, c.name
+            FROM installments i
+            LEFT JOIN customers c ON i.customer_id=c.id
+            WHERE IFNULL(i.paid,0) < i.amount AND date(i.due_date) < date('now')
+            ORDER BY i.due_date ASC
+            LIMIT 50
+            """
+        )
         for r,row in enumerate(rows):
             table.insertRow(r); table.setItem(r,0,QTableWidgetItem(str(row[0]))); table.setItem(r,1,QTableWidgetItem(row[1] or "")); table.setItem(r,2,QTableWidgetItem(row[2] or ""))
         table.resizeColumnsToContents()
@@ -875,11 +1038,24 @@ class MainApp(QMainWindow):
         from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel
         customers_count = Database().fetch_all("SELECT COUNT(*) FROM customers")[0][0]
         products_count = Database().fetch_all("SELECT COUNT(*) FROM products")[0][0]
-        total_due = Database().fetch_all("SELECT IFNULL(SUM(amount-paid),0) FROM installments WHERE IFNULL(paid,0) < amount")[0][0]
+        total_due = Database().fetch_all("SELECT IFNULL(SUM(amount-IFNULL(paid,0)),0) FROM installments WHERE IFNULL(paid,0) < amount")[0][0]
+        due_this_month = Database().fetch_all(
+            """
+            SELECT IFNULL(SUM(amount-IFNULL(paid,0)),0)
+            FROM installments
+            WHERE IFNULL(paid,0) < amount
+              AND strftime('%Y-%m', due_date) = strftime('%Y-%m', 'now')
+            """
+        )[0][0]
+        active_installments = Database().fetch_all("SELECT COUNT(*) FROM installments WHERE IFNULL(paid,0) < amount")[0][0]
         def make_card(title,value):
             f = QFrame(); f.setMinimumSize(220,120); f.setStyleSheet("background:#fff;border-radius:12px;"); v = QVBoxLayout(f)
             lblVal = QLabel(str(value)); lblVal.setAlignment(Qt.AlignCenter); lblVal.setStyleSheet("font-size:20px;font-weight:700;"); lblT = QLabel(title); lblT.setAlignment(Qt.AlignCenter); v.addWidget(lblVal); v.addWidget(lblT); return f
-        layout.addWidget(make_card("العملاء",customers_count)); layout.addWidget(make_card("المنتجات",products_count)); layout.addWidget(make_card("الأقساط المستحقة",total_due))
+        layout.addWidget(make_card("العملاء",customers_count))
+        layout.addWidget(make_card("المنتجات",products_count))
+        layout.addWidget(make_card("الأقساط الجارية",active_installments))
+        layout.addWidget(make_card("المستحق هذا الشهر", f"{float(due_this_month):,.2f} ج.م"))
+        layout.addWidget(make_card("إجمالي المتبقي", f"{float(total_due):,.2f} ج.م"))
 
     def refresh_reports_table(self):
         table = self.window.findChild(QWidget,"table_reports"); table.setRowCount(0)
@@ -891,17 +1067,117 @@ class MainApp(QMainWindow):
         table.resizeColumnsToContents()
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
+    def schedule_backup_if_needed(self):
+        try:
+            from PySide6.QtCore import QTimer
+            cfg = self.config.get('backup', {})
+            interval_code = cfg.get('interval', 'manual')
+            if interval_code == 'manual':
+                return
+            # map interval to milliseconds (approx)
+            ms_map = {
+                'daily': 24*60*60*1000,
+                'weekly': 7*24*60*60*1000,
+                'monthly': 30*24*60*60*1000
+            }
+            msec = ms_map.get(interval_code)
+            if not msec:
+                return
+            self._backup_timer = QTimer(self)
+            self._backup_timer.setInterval(msec)
+            self._backup_timer.timeout.connect(self.backup_database)
+            self._backup_timer.start()
+        except Exception:
+            pass
+
+    def export_reports_pdf(self):
+        try:
+            from PySide6.QtPrintSupport import QPrinter
+            from PySide6.QtGui import QTextDocument
+            doc = QTextDocument()
+            html = [
+                "<h2 style='text-align:center'>تقرير المختصر</h2>",
+            ]
+            customers_count = Database().fetch_all("SELECT COUNT(*) FROM customers")[0][0]
+            products_count = Database().fetch_all("SELECT COUNT(*) FROM products")[0][0]
+            total_due = Database().fetch_all("SELECT IFNULL(SUM(amount-IFNULL(paid,0)),0) FROM installments WHERE IFNULL(paid,0) < amount")[0][0]
+            due_this_month = Database().fetch_all("""
+                SELECT IFNULL(SUM(amount-IFNULL(paid,0)),0)
+                FROM installments
+                WHERE IFNULL(paid,0) < amount AND strftime('%Y-%m', due_date)=strftime('%Y-%m','now')
+            """)[0][0]
+            html.append(f"<p>العملاء: {customers_count}</p>")
+            html.append(f"<p>المنتجات: {products_count}</p>")
+            html.append(f"<p>الأقساط الجارية: {Database().fetch_all('SELECT COUNT(*) FROM installments WHERE IFNULL(paid,0) < amount')[0][0]}</p>")
+            html.append(f"<p>المستحق هذا الشهر: {float(due_this_month):,.2f} ج.م</p>")
+            html.append(f"<p>إجمالي المتبقي: {float(total_due):,.2f} ج.م</p>")
+            doc.setHtml("".join(html))
+            printer = QPrinter(QPrinter.HighResolution)
+            printer.setOutputFormat(QPrinter.PdfFormat)
+            printer.setOutputFileName(os.path.join(BASE_DIR, "report.pdf"))
+            doc.print_(printer)
+            QMessageBox.information(self, "تم", "تم تصدير التقرير إلى report.pdf")
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"تعذر تصدير التقرير: {e}")
+
+    def backup_database(self):
+        try:
+            import shutil
+            # destination dir from settings
+            backup_dir = self.config.get('backup',{}).get('dir', BASE_DIR)
+            os.makedirs(backup_dir, exist_ok=True)
+            src = os.path.join(BASE_DIR, 'installments.db')
+            dst = os.path.join(backup_dir, f"installments_backup.db")
+            shutil.copy2(src, dst)
+            QMessageBox.information(self, "تم", f"تم إنشاء نسخة احتياطية في: {dst}")
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"تعذر إنشاء النسخة الاحتياطية: {e}")
+
+    def choose_backup_dir(self):
+        try:
+            from PySide6.QtWidgets import QFileDialog
+            directory = QFileDialog.getExistingDirectory(self, "اختر مجلد النسخ الاحتياطي", self.edit_backup_dir.text() if self.edit_backup_dir else BASE_DIR)
+            if directory and self.edit_backup_dir:
+                self.edit_backup_dir.setText(directory)
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"تعذر اختيار المجلد: {e}")
+
+    def restore_backup(self):
+        try:
+            from PySide6.QtWidgets import QFileDialog
+            path, _ = QFileDialog.getOpenFileName(self, "استيراد نسخة قاعدة البيانات", self.config.get('backup',{}).get('dir', BASE_DIR), "Database (*.db)")
+            if not path:
+                return
+            import shutil
+            dst = os.path.join(BASE_DIR, 'installments.db')
+            shutil.copy2(path, dst)
+            QMessageBox.information(self, "تم", "تم استيراد قاعدة البيانات بنجاح. أعد تشغيل التطبيق.")
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"تعذر الاستيراد: {e}")
+
+    # CSV export removed per request
+
     def refresh_invoices(self):
         table = self.table_invoices
         table.setRowCount(0)
-        rows = Database().fetch_all("""
+        params = []
+        where = ""
+        if self.search_invoices and self.search_invoices.text().strip():
+            term = f"%{self.search_invoices.text().strip()}%"
+            where = " WHERE (c.name LIKE ? OR p.name LIKE ?)"
+            params.extend([term, term])
+        rows = Database().fetch_all(
+            """
             SELECT i.id, c.name, p.name, i.quantity, i.total_amount,
-                i.upfront_paid, i.installment_count, i.start_date, i.created_at
+                   i.upfront_paid, i.installment_count, i.start_date, i.created_at
             FROM invoices i
             LEFT JOIN customers c ON i.customer_id=c.id
             LEFT JOIN products p ON i.product_id=p.id
+            %s
             ORDER BY i.id DESC
-        """)
+            """ % where,
+            tuple(params)
+        )
         
         # Set column headers
         headers = ["ID", "العميل", "المنتج", "الكمية", "الإجمالي", "المدفوع مقدماً", "عدد الشهور", "تاريخ الإنشاء", "المتبقي", "العمليات"]
@@ -931,7 +1207,7 @@ class MainApp(QMainWindow):
                 table.setItem(r, col, item)
             
             # إضافة المبلغ المتبقي
-            remaining_item = QTableWidgetItem(f"{remaining:,.2f} د.ع")
+            remaining_item = QTableWidgetItem(f"{remaining:,.2f} ج.م")
             table.setItem(r, 8, remaining_item)
             
             # تنسيق الأرقام المالية
@@ -941,7 +1217,7 @@ class MainApp(QMainWindow):
                     if item:
                         try:
                             amount = float(row[col])
-                            item.setText(f"{amount:,.2f} د.ع")
+                            item.setText(f"{amount:,.2f} ج.م")
                         except (ValueError, TypeError):
                             pass
             
@@ -951,20 +1227,24 @@ class MainApp(QMainWindow):
             h.setContentsMargins(2, 2, 2, 2)
             h.setSpacing(2)
             
-            # زر عرض الدفعات
+            # زر إضافة دفعة
             btn_payments = QPushButton()
-            btn_payments.setIcon(icon("payments.svg"))
-            btn_payments.setToolTip("عرض الدفعات")
+            btn_payments.setIcon(icon("money.svg"))
+            btn_payments.setToolTip("إضافة دفعة")
             btn_payments.setFlat(True)
+            btn_payments.setIconSize(QSize(18,18))
             btn_payments.setFixedSize(30, 30)
-            btn_payments.clicked.connect(functools.partial(self.view_invoice_payments, invoice_id, row[1], row[2]))
+            btn_payments.setStyleSheet("QPushButton { background-color: #4CAF50; border-radius: 4px; } QPushButton:hover { background-color: #45a049; }")
+            btn_payments.clicked.connect(functools.partial(self.open_add_payment_dialog, invoice_id, remaining))
             
             # زر عرض الفاتورة
             btn_view = QPushButton()
-            btn_view.setIcon(icon("view.svg"))
+            btn_view.setIcon(icon("reports.svg"))
             btn_view.setToolTip("عرض الفاتورة")
             btn_view.setFlat(True)
+            btn_view.setIconSize(QSize(18,18))
             btn_view.setFixedSize(30, 30)
+            btn_view.setStyleSheet("QPushButton { background-color: #2196F3; border-radius: 4px; } QPushButton:hover { background-color: #1976D2; }")
             btn_view.clicked.connect(functools.partial(self.show_invoice_details, invoice_id))
             
             h.addWidget(btn_payments)
@@ -978,6 +1258,7 @@ class MainApp(QMainWindow):
         table.resizeColumnsToContents()
         table.resizeRowsToContents()
         table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
     # ---------------- actions ----------------
     def add_customer(self):
@@ -1066,30 +1347,50 @@ class MainApp(QMainWindow):
                 Database().execute("INSERT INTO installments (customer_id,product_id,due_date,amount,paid,invoice_id) VALUES (?,?,?,?,?,?)",
                                  (data["customer_id"], data["product_id"], due_date, monthly, 0, invoice_id))
             # refresh everything
-            self.refresh_products(); self.refresh_installments(); self.refresh_invoices(); self.refresh_alerts(); self.refresh_dashboard_cards(); self.refresh_reports_table()
+            self.refresh_products(); self.refresh_invoices(); self.refresh_alerts(); self.refresh_dashboard_cards(); self.refresh_reports_table()
             QMessageBox.information(self,"نجح","تم إنشاء الفاتورة والأقساط بنجاح")
+            # انتقل إلى صفحة الفواتير بعد الإضافة
+            page = self.window.findChild(QWidget, "page_invoices")
+            if page:
+                self.switch_page(page, "الفواتير")
 
     def open_pay_dialog(self, installment_id):
         # fetch installment amounts
-        row = Database().fetch_all("SELECT amount, IFNULL(paid,0) FROM installments WHERE id=?", (installment_id,))
+        row = Database().fetch_all("SELECT amount, IFNULL(paid,0), IFNULL(invoice_id,0) FROM installments WHERE id=?", (installment_id,))
         if not row: return
-        amount, paid = float(row[0][0]), float(row[0][1])
+        amount, paid, inv_id = float(row[0][0]), float(row[0][1]), int(row[0][2] or 0)
         remaining = round(amount - paid, 2)
         if remaining <= 0:
             QMessageBox.information(self, "مكتمل", "هذا القسط مسدّد بالكامل بالفعل.")
             return
-        dlg = AddPaymentDialog(installment_id, remaining, self)
+        
+        # Create a custom installment payment dialog
+        dlg = InstallmentPaymentDialog(installment_id, remaining, self)
         if dlg.exec() == QDialog.Accepted:
             amt = dlg.get_amount()
             if amt <= 0:
                 QMessageBox.warning(self, "قيمة خاطئة", "أدخل مبلغًا أكبر من الصفر.")
                 return
             if amt > remaining:
-                QMessageBox.warning(self, "مبلغ أكبر من المتبقي", fالمبلغ_المتبقي := f"المتبقي: {remaining}"); 
-                # allow user to still proceed? keep it strict:
-                QMessageBox.warning(self, "خطأ", f"المبلغ الذي أدخلته أكبر من المتبقي ({remaining})"); return
+                QMessageBox.warning(self, "خطأ", f"المبلغ الذي أدخلته أكبر من المتبقي ({remaining})")
+                return
+            
+            # Update the installment paid amount
             Database().execute("UPDATE installments SET paid = IFNULL(paid,0) + ? WHERE id=?", (amt, installment_id))
-            self.refresh_installments(); self.refresh_alerts(); self.refresh_dashboard_cards(); self.refresh_reports_table(); self.refresh_invoices()
+            
+            # If this installment is linked to an invoice, also record the payment
+            if inv_id:
+                Database().execute(
+                    "INSERT INTO payments (invoice_id, payment_date, amount, notes) VALUES (?,?,?,?)",
+                    (inv_id, dlg.get_payment_date(), float(amt), dlg.get_notes() or f"سداد قسط #{installment_id}")
+                )
+            
+            # Refresh all relevant data
+            self.refresh_installments()
+            self.refresh_alerts()
+            self.refresh_dashboard_cards()
+            self.refresh_reports_table()
+            self.refresh_invoices()
 
     def mark_installment_paid(self, iid):
         # kept for compatibility: directly open pay dialog
@@ -1098,7 +1399,7 @@ class MainApp(QMainWindow):
     def delete_installment(self, iid):
         if QMessageBox.question(self,"تأكيد","هل تريد حذف هذا القسط؟") != QMessageBox.Yes: return
         Database().execute("DELETE FROM installments WHERE id=?", (iid,))
-        self.refresh_installments(); self.refresh_alerts(); self.refresh_dashboard_cards(); self.refresh_reports_table(); self.refresh_invoices()
+        self.refresh_alerts(); self.refresh_dashboard_cards(); self.refresh_reports_table(); self.refresh_invoices()
 
     def show_invoice_for_installment(self, invoice_id):
         if not invoice_id:
@@ -1113,18 +1414,237 @@ class MainApp(QMainWindow):
         txt = f"فاتورة رقم: {inv[0]}\nالعميل: {Database().fetch_all('SELECT name FROM customers WHERE id=?', (inv[1],))[0][0]}\nالمنتج: {Database().fetch_all('SELECT name FROM products WHERE id=?', (inv[2],))[0][0]}\nالكمية: {inv[3]}\nالإجمالي: {inv[4]}\nالمدفوع مقدماً: {inv[5]}\nعدد الشهور: {inv[6]}\nتاريخ الإنشاء: {inv[7]}"
         QMessageBox.information(self, "تفاصيل الفاتورة", txt)
 
+    def open_add_payment_dialog(self, invoice_id, remaining_amount):
+        """Open dialog to add a new payment for an invoice"""
+        from payments_dialog import AddPaymentDialog
+        dlg = AddPaymentDialog(invoice_id, remaining_amount, self)
+        if dlg.exec() == QDialog.Accepted:
+            # Get payment data
+            amount = dlg.get_amount()
+            notes = dlg.get_notes()
+            payment_date = dlg.get_payment_date()
+            
+            # Record the payment
+            try:
+                db = Database()
+                db.execute(
+                    "INSERT INTO payments (invoice_id, amount, payment_date, notes) VALUES (?, ?, ?, ?)",
+                    (invoice_id, amount, payment_date, notes)
+                )
+                
+                # Update installment paid amounts - find the first unpaid installment
+                # First, get the first unpaid installment
+                unpaid_installment = db.fetch_all(
+                    """
+                    SELECT id, amount, COALESCE(paid, 0) as paid
+                    FROM installments 
+                    WHERE invoice_id = ? AND COALESCE(paid, 0) < amount
+                    ORDER BY due_date ASC
+                    LIMIT 1
+                    """,
+                    (invoice_id,)
+                )
+                
+                if unpaid_installment:
+                    installment_id, installment_amount, already_paid = unpaid_installment[0]
+                    new_paid_amount = min(already_paid + amount, installment_amount)
+                    
+                    # Update the installment
+                    db.execute(
+                        "UPDATE installments SET paid = ? WHERE id = ?",
+                        (new_paid_amount, installment_id)
+                    )
+                
+                QMessageBox.information(self, "نجح", "تم تسجيل الدفعة بنجاح")
+                
+                # Refresh data
+                self.refresh_invoices()
+                self.refresh_alerts()
+                self.refresh_dashboard_cards()
+                
+            except Exception as e:
+                QMessageBox.critical(self, "خطأ", f"تعذر تسجيل الدفعة: {e}")
+
+    def show_customer_details(self, customer_id: int):
+        try:
+            row = Database().fetch_all("SELECT name, phone, COALESCE(note, '') FROM customers WHERE id=?", (customer_id,))
+            if not row:
+                QMessageBox.warning(self, "خطأ", "لم يتم العثور على العميل")
+                return
+            name, phone, note = row[0][0], row[0][1] or "", row[0][2] or ""
+
+            from payments_dialog import PaymentsDialog
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle(f"تفاصيل العميل - {name}")
+            dlg.setMinimumSize(800, 600)
+            v = QVBoxLayout(dlg)
+
+            info = QLabel(f"<b>الاسم:</b> {name} &nbsp;&nbsp; <b>الهاتف:</b> {phone}<br/><b>ملاحظات:</b> {note}")
+            v.addWidget(info)
+
+            tabs = QTabWidget()
+            v.addWidget(tabs)
+
+            # الفواتير
+            w_invoices = QWidget(); l_inv = QVBoxLayout(w_invoices)
+            tbl_inv = QTableWidget(); tbl_inv.setColumnCount(8)
+            tbl_inv.setHorizontalHeaderLabels(["#","المنتج","الكمية","الإجمالي","المدفوع","المتبقي","تاريخ الإنشاء","إجراءات"]) 
+            tbl_inv.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            l_inv.addWidget(tbl_inv)
+
+            inv_rows = Database().fetch_all(
+                """
+                SELECT i.id, p.name, i.quantity, i.total_amount, i.upfront_paid, i.created_at
+                FROM invoices i LEFT JOIN products p ON i.product_id=p.id
+                WHERE i.customer_id=? ORDER BY i.id DESC
+                """, (customer_id,)
+            )
+            for r, inv in enumerate(inv_rows):
+                invoice_id = inv[0]
+                total_amount = float(inv[3] or 0)
+                paid_sum = Database().fetch_all("SELECT IFNULL(SUM(amount),0) FROM payments WHERE invoice_id=?", (invoice_id,))[0][0]
+                remaining = max(0.0, total_amount - float(paid_sum or 0))
+
+                tbl_inv.insertRow(r)
+                tbl_inv.setItem(r,0,QTableWidgetItem(str(invoice_id)))
+                tbl_inv.setItem(r,1,QTableWidgetItem(str(inv[1] or "")))
+                tbl_inv.setItem(r,2,QTableWidgetItem(str(inv[2] or 0)))
+                tbl_inv.setItem(r,3,QTableWidgetItem(f"{total_amount:,.2f} ج.م"))
+                tbl_inv.setItem(r,4,QTableWidgetItem(f"{float(paid_sum):,.2f} ج.م"))
+                rem_item = QTableWidgetItem(f"{remaining:,.2f} ج.م")
+                rem_item.setForeground(QColor("#388e3c") if remaining <= 0 else QColor("#d32f2f"))
+                tbl_inv.setItem(r,5, rem_item)
+                tbl_inv.setItem(r,6,QTableWidgetItem(str(inv[5] or "")))
+
+                w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0,0,0,0)
+                btn_add = QPushButton("إضافة دفعة"); btn_add.setProperty("class","table-action")
+                btn_add.clicked.connect(lambda _, iid=invoice_id: PaymentsDialog(iid, name, str(inv[1] or ""), self).exec())
+                h.addWidget(btn_add)
+                btn_view = QPushButton("عرض السجل")
+                btn_view.setProperty("class","table-action")
+                btn_view.clicked.connect(lambda _, iid=invoice_id: PaymentsDialog(iid, name, str(inv[1] or ""), self).exec())
+                h.addWidget(btn_view)
+                tbl_inv.setCellWidget(r,7,w)
+
+            tabs.addTab(w_invoices, "الفواتير")
+
+            # الأقساط
+            w_inst = QWidget(); l_ins = QVBoxLayout(w_inst)
+            tbl_ins = QTableWidget(); tbl_ins.setColumnCount(7)
+            tbl_ins.setHorizontalHeaderLabels(["#","المنتج","تاريخ الاستحقاق","المبلغ","المسدّد","المتبقي","رقم الفاتورة"]) 
+            tbl_ins.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            l_ins.addWidget(tbl_ins)
+
+            inst_rows = Database().fetch_all(
+                """
+                SELECT i.id, p.name, i.due_date, i.amount, IFNULL(i.paid,0) as paid, i.invoice_id
+                FROM installments i LEFT JOIN products p ON i.product_id=p.id
+                WHERE i.customer_id=? ORDER BY i.due_date ASC
+                """, (customer_id,)
+            )
+            for r, it in enumerate(inst_rows):
+                amt = float(it[3] or 0); pd = float(it[4] or 0); rem = amt - pd
+                tbl_ins.insertRow(r)
+                tbl_ins.setItem(r,0,QTableWidgetItem(str(it[0])))
+                tbl_ins.setItem(r,1,QTableWidgetItem(str(it[1] or "")))
+                tbl_ins.setItem(r,2,QTableWidgetItem(str(it[2] or "")))
+                tbl_ins.setItem(r,3,QTableWidgetItem(f"{amt:,.2f} ج.م"))
+                tbl_ins.setItem(r,4,QTableWidgetItem(f"{pd:,.2f} ج.م"))
+                rem_item2 = QTableWidgetItem(f"{rem:,.2f} ج.م"); rem_item2.setForeground(QColor("#388e3c") if rem<=0 else QColor("#d32f2f"))
+                tbl_ins.setItem(r,5, rem_item2)
+                tbl_ins.setItem(r,6,QTableWidgetItem(str(it[5] or "")))
+
+            tabs.addTab(w_inst, "الأقساط")
+
+            # المدفوعات السابقة
+            w_pay = QWidget(); l_pay = QVBoxLayout(w_pay)
+            tbl_pay = QTableWidget(); tbl_pay.setColumnCount(4)
+            tbl_pay.setHorizontalHeaderLabels(["#","تاريخ الدفعة","المبلغ","ملاحظات"]) 
+            tbl_pay.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            l_pay.addWidget(tbl_pay)
+
+            pay_rows = Database().fetch_all(
+                """
+                SELECT p.id, p.payment_date, p.amount, COALESCE(p.notes,'')
+                FROM payments p
+                INNER JOIN invoices i ON p.invoice_id = i.id
+                WHERE i.customer_id = ?
+                ORDER BY p.payment_date DESC, p.id DESC
+                """, (customer_id,)
+            )
+            for r, pr in enumerate(pay_rows):
+                tbl_pay.insertRow(r)
+                tbl_pay.setItem(r,0,QTableWidgetItem(str(pr[0])))
+                tbl_pay.setItem(r,1,QTableWidgetItem(str(pr[1] or "")))
+                tbl_pay.setItem(r,2,QTableWidgetItem(f"{float(pr[2] or 0):,.2f} ج.م"))
+                tbl_pay.setItem(r,3,QTableWidgetItem(str(pr[3] or "")))
+
+            tabs.addTab(w_pay, "المدفوعات")
+
+            dlg.exec()
+
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"تعذر فتح تفاصيل العميل: {e}")
+
     def _on_installment_double(self, row, col):
         try:
             iid = int(self.table_installments.item(row,0).text()); self.open_pay_dialog(iid)
         except Exception:
             pass
 
+    def logout(self):
+        """تسجيل الخروج من التطبيق"""
+        reply = QMessageBox.question(self, "تأكيد", "هل تريد إغلاق التطبيق؟", 
+                                   QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.close()
+            
+    def prevent_maximization(self):
+        """منع تكبير النافذة والحفاظ على الحجم المحدد"""
+        try:
+            # الحصول على أبعاد الشاشة الحالية
+            screen = self.screen()
+            screen_geometry = screen.geometry()
+            
+            # التأكد من أن النافذة ليست مكبرة
+            if self.isMaximized():
+                self.showNormal()
+            
+            # إعادة تعيين الحجم ليطابق أبعاد الشاشة
+            self.resize(screen_geometry.width(), screen_geometry.height())
+            
+            # إعادة تعيين الموقع
+            self.move(screen_geometry.x(), screen_geometry.y())
+        except Exception:
+            pass
+
+
+
 # ---------------- main ----------------
 def main():
+    # تفعيل خيار OpenGL قبل إنشاء التطبيق
+    from PySide6.QtCore import QCoreApplication
+    QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv); app.setLayoutDirection(Qt.RightToLeft)
     try:
         with open(QSS_LIGHT, "r", encoding="utf-8") as f: app.setStyleSheet(f.read())
     except: pass
-    win = MainApp(); win.show(); sys.exit(app.exec())
+    win = MainApp();
+    
+    # الحصول على أبعاد الشاشة الرئيسية
+    screen = app.primaryScreen()
+    screen_geometry = screen.geometry()
+    
+    # تعيين حجم النافذة ليطابق أبعاد الشاشة بالضبط
+    win.resize(screen_geometry.width(), screen_geometry.height())
+    
+    # تعيين موقع النافذة ليكون في أعلى يسار الشاشة
+    win.move(screen_geometry.x(), screen_geometry.y())
+    
+    # عرض النافذة
+    win.show()
+    
+    sys.exit(app.exec())
 
 if __name__ == "__main__": main()

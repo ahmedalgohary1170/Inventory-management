@@ -1,6 +1,15 @@
 
-QWidget { background: #101217; font-family: "Noto Naskh Arabic", "Segoe UI", Arial; color: #e6eef0; font-size:15px; }
-QFrame#sidebar { background:#000; color:#fff; }
-QTableWidget { background:#1a1d22; color:#e6eef0; border-radius:10px; }
-QHeaderView::section { color:#e6eef0; }
+/* Dark theme - refreshed visual identity */
+QWidget { background: #0f1418; font-family: "Noto Naskh Arabic", "Segoe UI", Arial; color: #e6eef0; font-size:15px; }
+QPushButton { background:#00bcd4; color:#0b0c10; border:none; border-radius:10px; padding:8px 14px; }
+QPushButton:hover { background:#26c6da; color:#0b0c10; }
+QPushButton:disabled { background:#335d64; color:#9fbec3; }
+QFrame#sidebar { background:#0b0c10; color:#e0f7fa; }
+QTableWidget { background:#151a1f; color:#e6eef0; border-radius:12px; }
+QHeaderView::section { background:#1e252b; color:#bfe9ef; padding:10px; font-weight:800; border:none; }
+QTableWidget::item:selected { background:#163e46; color:#e6eef0; }
+QPushButton:flat { border: none; }
+QPushButton.table-action { color:#bfe9ef; }
+QPushButton.table-action:hover { background: rgba(0,188,212,0.18); border-radius:8px; color:#ffffff; }
+QTableCornerButton::section { background:#1e252b; border:none; }
 * { qproperty-layoutDirection: RightToLeft; }

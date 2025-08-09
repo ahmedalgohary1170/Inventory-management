@@ -1,13 +1,19 @@
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, 
                              QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, 
                              QLabel, QMessageBox, QTextEdit, QDateEdit, QDoubleSpinBox,
-                             QAbstractSpinBox, QTextDocument, QWidget, QSizePolicy)
+                             QAbstractSpinBox, QWidget, QSizePolicy)
 from PySide6.QtCore import Qt, QDate, QSize
-from PySide6.QtGui import QTextCursor, QTextFormat, QColor
+from PySide6.QtGui import QTextCursor, QTextFormat, QColor, QTextDocument
 from database import Database
+import os
+from PySide6.QtGui import QIcon
 
-def icon(name):
-    return name  # This is a placeholder, replace with your actual icon function
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ICONS_DIR = os.path.join(BASE_DIR, "icons")
+
+def icon(name: str) -> QIcon:
+    p = os.path.join(ICONS_DIR, name)
+    return QIcon(p) if os.path.exists(p) else QIcon()
 
 class AddPaymentDialog(QDialog):
     def __init__(self, invoice_id, remaining, parent=None):
@@ -27,16 +33,16 @@ class AddPaymentDialog(QDialog):
         self.amount_input = QDoubleSpinBox()
         self.amount_input.setMaximum(remaining)
         self.amount_input.setMinimum(0.01)
-        self.amount_input.setValue(min(remaining, 1000))  # Default to 1000 or remaining, whichever is smaller
+        self.amount_input.setValue(0.00)  # Default to 0.00 (empty)
         self.amount_input.setDecimals(2)
-        self.amount_input.setSuffix(" د.ع")
-        self.amount_input.setButtonSymbols(QDoubleSpinBox.UpDownArrows)
+        self.amount_input.setSuffix(" ج.م")
+        self.amount_input.setButtonSymbols(QAbstractSpinBox.UpDownArrows)
         
         # Connect value changed to update remaining label
         self.amount_input.valueChanged.connect(self.update_remaining_label)
         
         # Remaining amount label
-        self.lbl_remaining = QLabel(f"المبلغ المتبقي: {remaining:,.2f} د.ع")
+        self.lbl_remaining = QLabel(f"المبلغ المتبقي: {remaining:,.2f} ج.م")
         self.lbl_remaining.setStyleSheet("font-weight: bold; color: #d32f2f;")
         
         # Payment date
@@ -77,7 +83,7 @@ class AddPaymentDialog(QDialog):
 
     def update_remaining_label(self, value):
         remaining = self.remaining - value
-        self.lbl_remaining.setText(f"المبلغ المتبقي: {remaining:,.2f} د.ع")
+        self.lbl_remaining.setText(f"المبلغ المتبقي: {remaining:,.2f} ج.م")
         
         # Update color based on remaining amount
         if remaining <= 0:
@@ -133,9 +139,9 @@ class PaymentsDialog(QDialog):
         summary_group = QGroupBox("ملخص المدفوعات")
         summary_layout = QHBoxLayout()
         
-        self.lbl_total = QLabel("0.00 د.ع")
-        self.lbl_paid = QLabel("0.00 د.ع")
-        self.lbl_remaining = QLabel("0.00 د.ع")
+        self.lbl_total = QLabel("0.00 ج.م")
+        self.lbl_paid = QLabel("0.00 ج.م")
+        self.lbl_remaining = QLabel("0.00 ج.م")
         
         # Style labels
         for label in [self.lbl_total, self.lbl_paid, self.lbl_remaining]:
@@ -164,10 +170,10 @@ class PaymentsDialog(QDialog):
         # Buttons
         btn_layout = QHBoxLayout()
         self.btn_add_payment = QPushButton("إضافة دفعة")
-        self.btn_add_payment.setIcon(icon("add_payment.svg"))
+        self.btn_add_payment.setIcon(icon("payments.svg"))
         self.btn_delete_payment = QPushButton("حذف الدفعة المحددة")
         self.btn_delete_payment.setIcon(icon("delete.svg"))
-        self.btn_print = QPushButton("طباعة السجل")
+        self.btn_print = QPushButton("تصدير PDF")
         self.btn_print.setIcon(icon("print.svg"))
         self.btn_close = QPushButton("إغلاق")
         self.btn_close.setIcon(icon("close.svg"))
@@ -222,7 +228,7 @@ class PaymentsDialog(QDialog):
             
             # Add items to table
             for col, value in enumerate(row_data[1:]):  # Skip row_num
-                item = QTableWidgetItem(str(value) if col != 2 else f"{float(value):,.2f} د.ع")
+                item = QTableWidgetItem(str(value) if col != 2 else f"{float(value):,.2f} ج.م")
                 item.setData(Qt.UserRole, row_data[1])  # Store payment ID in first column
                 
                 # Right align amount
@@ -257,9 +263,9 @@ class PaymentsDialog(QDialog):
         remaining = total - paid
         
         # Update labels
-        self.lbl_total.setText(f"{total:,.2f} د.ع")
-        self.lbl_paid.setText(f"{paid:,.2f} د.ع")
-        self.lbl_remaining.setText(f"{remaining:,.2f} د.ع")
+        self.lbl_total.setText(f"{total:,.2f} ج.م")
+        self.lbl_paid.setText(f"{paid:,.2f} ج.م")
+        self.lbl_remaining.setText(f"{remaining:,.2f} ج.م")
         
         # Update colors based on status
         self.lbl_remaining.setStyleSheet(
@@ -271,8 +277,8 @@ class PaymentsDialog(QDialog):
 
     def add_payment(self):
         # Get remaining amount
-        total = float(self.lbl_total.text().replace(" د.ع", "").replace(",", ""))
-        paid = float(self.lbl_paid.text().replace(" د.ع", "").replace(",", ""))
+        total = float(self.lbl_total.text().replace(" ج.م", "").replace(",", ""))
+        paid = float(self.lbl_paid.text().replace(" ج.م", "").replace(",", ""))
         remaining = total - paid
 
         if remaining <= 0:
