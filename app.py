@@ -7,9 +7,10 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QMessageBox, QDialog, 
                                QComboBox, QDateEdit, QDoubleSpinBox, QSpinBox, QHeaderView, QAbstractItemView, QTextEdit,
                                QAbstractSpinBox, QScrollArea, QTabWidget)
 from PySide6.QtCore import QFile, Qt, QSize, QDate
-from PySide6.QtGui import QIcon, QColor
+from PySide6.QtGui import QIcon, QColor, QGuiApplication
 from PySide6.QtUiTools import QUiLoader
 from database import Database
+from payments_dialog import AddPaymentDialog
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UI_PATH = os.path.join(BASE_DIR, "mainwindow.ui")
 QSS_LIGHT = os.path.join(BASE_DIR, "style_light.qss")
@@ -412,6 +413,11 @@ class MainApp(QMainWindow):
             QMessageBox.critical(None,"خطأ",f"تعذّر فتح ملف الواجهة: {UI_PATH}");
             sys.exit(1)
         self.window = loader.load(f); f.close(); self.setCentralWidget(self.window)
+        # ضبط حجم النافذة حسب الشاشة الحالية
+        from PySide6.QtGui import QGuiApplication
+        screen = QGuiApplication.primaryScreen()
+        geometry = screen.availableGeometry()
+        self.setGeometry(geometry)
 
         # load config & theme
         self.config = load_config()
@@ -420,7 +426,6 @@ class MainApp(QMainWindow):
         # init db and tables
         Database()
         create_tables()
-        self.ensure_sample_data()
 
         # widgets
         self.stacked = self.window.findChild(QWidget,"stacked_widget")
@@ -956,7 +961,7 @@ class MainApp(QMainWindow):
             form.addRow("المنتج:", QLabel(invoice.get('product_name', 'غير محدد')))
             form.addRow("الكمية:", QLabel(str(invoice.get('quantity', 1))))
             form.addRow("المبلغ الإجمالي:", QLabel(format_currency(invoice.get('total_amount', 0))))
-            form.addRow("المدفوع مقدمًا:", QLabel(format_currency(invoice.get('upfront_paid', 0))))
+            form.addRow("المدفوع مقدماً:", QLabel(format_currency(invoice.get('upfront_paid', 0))))
             form.addRow("عدد الأقساط:", QLabel(str(invoice.get('installment_count', 0))))
             form.addRow("قيمة القسط:", QLabel(format_currency(invoice.get('installment_amount', 0))))
             form.addRow("تاريخ البدء:", QLabel(invoice.get('start_date', 'غير محدد')))
@@ -1011,19 +1016,38 @@ class MainApp(QMainWindow):
             )
 
     def refresh_alerts(self):
-        table = self.table_alerts; table.setRowCount(0)
+        table = self.table_alerts
+        table.setRowCount(0)
+        # جلب الأقساط المتأخرة فقط (المتبقي > 0 وتاريخ الاستحقاق أقل من اليوم)
         rows = Database().fetch_all(
-            """
-            SELECT i.amount, i.due_date, c.name
+            '''
+            SELECT i.id, p.name, i.due_date, i.amount, IFNULL(i.paid,0) as paid, c.name
             FROM installments i
-            LEFT JOIN customers c ON i.customer_id=c.id
+            LEFT JOIN products p ON i.product_id = p.id
+            LEFT JOIN customers c ON i.customer_id = c.id
             WHERE IFNULL(i.paid,0) < i.amount AND date(i.due_date) < date('now')
             ORDER BY i.due_date ASC
             LIMIT 50
-            """
+            '''
         )
-        for r,row in enumerate(rows):
-            table.insertRow(r); table.setItem(r,0,QTableWidgetItem(str(row[0]))); table.setItem(r,1,QTableWidgetItem(row[1] or "")); table.setItem(r,2,QTableWidgetItem(row[2] or ""))
+        for r, row in enumerate(rows):
+            inst_id = row[0]
+            prod_name = row[1] or ""
+            due_date = row[2] or ""
+            amount = float(row[3] or 0)
+            paid = float(row[4] or 0)
+            remaining = amount - paid
+            cust_name = row[5] or ""
+            table.insertRow(r)
+            table.setItem(r, 0, QTableWidgetItem(f"{amount:,.2f} ج.م"))
+            table.setItem(r, 1, QTableWidgetItem(due_date))
+            table.setItem(r, 2, QTableWidgetItem(cust_name))
+            # تلوين الصف إذا كان متأخر
+            for col in range(table.columnCount()):
+                item = table.item(r, col)
+                if item:
+                    item.setBackground(QColor(255, 200, 200))
+            # يمكنك إضافة زر أو تفاصيل إضافية هنا إذا رغبت
         table.resizeColumnsToContents()
 
     def refresh_dashboard_cards(self):
@@ -1234,7 +1258,7 @@ class MainApp(QMainWindow):
             btn_payments.setFlat(True)
             btn_payments.setIconSize(QSize(18,18))
             btn_payments.setFixedSize(30, 30)
-            btn_payments.setStyleSheet("QPushButton { background-color: #4CAF50; border-radius: 4px; } QPushButton:hover { background-color: #45a049; }")
+            btn_payments.setStyleSheet("QPushButton { background-color: #fff; border-radius: 4px; } QPushButton:hover { background-color: #f0f0f0; }")
             btn_payments.clicked.connect(functools.partial(self.open_add_payment_dialog, invoice_id, remaining))
             
             # زر عرض الفاتورة
@@ -1244,7 +1268,7 @@ class MainApp(QMainWindow):
             btn_view.setFlat(True)
             btn_view.setIconSize(QSize(18,18))
             btn_view.setFixedSize(30, 30)
-            btn_view.setStyleSheet("QPushButton { background-color: #2196F3; border-radius: 4px; } QPushButton:hover { background-color: #1976D2; }")
+            btn_view.setStyleSheet("QPushButton { background-color: #fff; border-radius: 4px; } QPushButton:hover { background-color: #f0f0f0; }")
             btn_view.clicked.connect(functools.partial(self.show_invoice_details, invoice_id))
             
             h.addWidget(btn_payments)
@@ -1446,7 +1470,7 @@ class MainApp(QMainWindow):
                 )
                 
                 if unpaid_installment:
-                    installment_id, installment_amount, already_paid = unpaid_installment[0]
+                    installment_id, installment_amount, already_paid = unpaid_installment
                     new_paid_amount = min(already_paid + amount, installment_amount)
                     
                     # Update the installment

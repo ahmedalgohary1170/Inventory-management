@@ -29,7 +29,7 @@ QFrame#headerFrame QLabel { color:#0b3c49; }
 QTableWidget { background: #fff; border-radius:12px; gridline-color:#e9eef0; font-size:14px; }
 QHeaderView::section { background: #eaf4f6; color:#0b3c49; padding:10px; font-weight:800; border:none; }
 QTableWidget::item { padding:10px; }
-QTableWidget::item:selected { background: #c8eef5; color:#0b3c49; }
+QTableWidget::item:selected { background: #c8eef5; color: #0b3c49; }
 QTableCornerButton::section { background:#eaf4f6; border:none; }
 
 /* Buttons in table cells */
@@ -38,7 +38,7 @@ QPushButton.table-action:hover { background: rgba(0,188,212,0.12); border-radius
 
 /* Dialogs */
 QDialog { background:#fff; border-radius:14px; }
-QDialog QPushButton { background:#00bcd4; color:#fff; border-radius:8px; padding:8px 14px; }
+QDialog QPushButton { background:#00bcd4; color: #fff; border-radius:8px; padding:8px 14px; }
 QDialog QPushButton:hover { background:#26c6da; }
 
 /* Settings form */
