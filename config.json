@@ -1,4 +1,9 @@
 {
   "theme": "light",
-  "font_size": 20
+  "font_size": 20,
+  "backup": {
+    "interval": "manual",
+    "dir": "/home/gohary/project/gui/inventory_app_v3"
+  },
+  "db_path": "/home/gohary/Documents/.installments.db"
 }
