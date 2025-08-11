@@ -658,9 +658,18 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
         self.table_alerts = self.findChild(QWidget,"table_alerts")
         self.table_reports = self.findChild(QWidget,"table_reports")
         self.chartArea = self.findChild(QWidget,"chartArea")
-        self.table_invoices = self.findChild(QWidget,"table_invoices")
+        self.table_invoices = self.findChild(QWidget, "table_invoices")
         if self.table_invoices:
             self.table_invoices.setColumnCount(10)
+            
+        # Initialize installments table
+        self.table_installments = self.findChild(QWidget, "table_installments")
+        if self.table_installments:
+            # Setup installments table with appropriate columns
+            self.setup_table(self.table_installments, [
+                "رقم الفاتورة", "العميل", "المنتج", "تاريخ الاستحقاق", 
+                "المبلغ", "المسدد", "المتبقي", "رقم الفاتورة", "الحالة", "العمليات"
+            ])
 
         self.btn_add_inventory = self.findChild(QWidget,"btn_add_inventory")
         self.btn_add_customer = self.findChild(QWidget,"btn_add_customer")
@@ -1004,85 +1013,134 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
         table.resizeRowsToContents()
 
     def refresh_installments(self):
-        table = self.table_installments
-        if not table:
-            return
-        table.setRowCount(0)
+        try:
+            # Safely get the installments table
+            table = getattr(self, 'table_installments', None)
+            if not table:
+                table = self.findChild(QTableWidget, "table_installments")
+                if not table:
+                    print("Warning: Installments table not found")
+                    return
+                self.table_installments = table
+            
+            # Make sure the table is properly initialized
+            if not hasattr(table, 'setRowCount'):
+                print("Error: Invalid table widget")
+                return
+                
+            # Clear existing rows
+            table.setRowCount(0)
+            
+            # Initialize filters
+            params = []
+            where = " WHERE 1=1"
+            if hasattr(self, 'filter_customer_cb') and self.filter_customer_cb:
+                customer_id = self.filter_customer_cb.currentData()
+                if customer_id:
+                    where += " AND c.id = ?"
+                    params.append(customer_id)
+                    
+            # 1) Aggregated rows for installments linked to an invoice
+            agg_query = f"""
+                SELECT i.invoice_id,
+                       c.id as customer_id,
+                       c.name as customer_name,
+                       p.name as product_name,
+                       MIN(CASE WHEN IFNULL(i.paid,0) < i.amount THEN i.due_date ELSE NULL END) as next_due,
+                       SUM(i.amount) as total_amount,
+                       SUM(IFNULL(i.paid,0)) as total_paid,
+                       COUNT(*) as inst_count
+                FROM installments i
+                LEFT JOIN customers c ON i.customer_id = c.id
+                LEFT JOIN products p ON i.product_id = p.id
+                {where} AND i.invoice_id IS NOT NULL
+                GROUP BY i.invoice_id, c.id, c.name, p.name
+                ORDER BY next_due ASC
+            """
+            agg_rows = Database().fetch_all(agg_query, tuple(params)) if params else []
 
-        # Filters
-        params = []
-        where = " WHERE 1=1"
-        if hasattr(self, 'filter_customer_cb') and self.filter_customer_cb:
-            customer_id = self.filter_customer_cb.currentData()
-            if customer_id:
-                where += " AND c.id = ?"
-                params.append(customer_id)
+            row_index = 0
+            for row in agg_rows:
+                try:
+                    invoice_id = row[0]
+                    cust_id = row[1]
+                    cust_name = row[2] or ""
+                    prod_name = row[3] or ""
+                    next_due = row[4] or ""
+                    total_amount = float(row[5] or 0)
+                    total_paid = float(row[6] or 0)
+                    inst_count = int(row[7] or 0)
+                    remaining = max(0.0, total_amount - total_paid)
 
+                    # Insert new row
+                    table.insertRow(row_index)
+                    
+                    # Set row data
+                    table.setItem(row_index, 0, QTableWidgetItem(f"INV-{invoice_id}"))
+                    table.setItem(row_index, 1, QTableWidgetItem(cust_name))
+                    table.setItem(row_index, 2, QTableWidgetItem(f"{prod_name} ({inst_count} شهر)"))
+                    table.setItem(row_index, 3, QTableWidgetItem(next_due))
+                    table.setItem(row_index, 4, QTableWidgetItem(f"{total_amount:,.2f} ج.م"))
+                    table.setItem(row_index, 5, QTableWidgetItem(f"{total_paid:,.2f} ج.م"))
+                    
+                    # Set remaining amount with color coding
+                    rem_item = QTableWidgetItem(f"{remaining:,.2f} ج.م")
+                    rem_item.setForeground(QColor("#388e3c") if remaining <= 0 else QColor("#d32f2f"))
+                    table.setItem(row_index, 6, rem_item)
+                    
+                    # Set invoice ID and status
+                    table.setItem(row_index, 7, QTableWidgetItem(str(invoice_id)))
+                    status_item = QTableWidgetItem("مسدد" if remaining <= 0 else "غير مسدد")
+                    status_item.setForeground(QColor("#388e3c") if remaining <= 0 else QColor("#d32f2f"))
+                    table.setItem(row_index, 8, status_item)
 
-        # 1) Aggregated rows for installments linked to an invoice
-        agg_query = f"""
-            SELECT i.invoice_id,
-                   c.id as customer_id,
-                   c.name as customer_name,
-                   p.name as product_name,
-                   MIN(CASE WHEN IFNULL(i.paid,0) < i.amount THEN i.due_date ELSE NULL END) as next_due,
-                   SUM(i.amount) as total_amount,
-                   SUM(IFNULL(i.paid,0)) as total_paid,
-                   COUNT(*) as inst_count
-            FROM installments i
-            LEFT JOIN customers c ON i.customer_id = c.id
-            LEFT JOIN products p ON i.product_id = p.id
-            {where} AND i.invoice_id IS NOT NULL
-            GROUP BY i.invoice_id, c.id, c.name, p.name
-            ORDER BY next_due ASC
-        """
-        agg_rows = Database().fetch_all(agg_query, tuple(params))
-
-        row_index = 0
-        for row in agg_rows:
-            invoice_id = row[0]
-            cust_id = row[1]
-            cust_name = row[2] or ""
-            prod_name = row[3] or ""
-            next_due = row[4] or ""
-            total_amount = float(row[5] or 0)
-            total_paid = float(row[6] or 0)
-            inst_count = int(row[7] or 0)
-            remaining = max(0.0, total_amount - total_paid)
-
-            table.insertRow(row_index)
-            table.setItem(row_index, 0, QTableWidgetItem(f"INV-{invoice_id}"))
-            table.setItem(row_index, 1, QTableWidgetItem(cust_name))
-            table.setItem(row_index, 2, QTableWidgetItem(f"{prod_name} ({inst_count} شهر)"))
-            table.setItem(row_index, 3, QTableWidgetItem(next_due))
-            table.setItem(row_index, 4, QTableWidgetItem(f"{total_amount:,.2f} ج.م"))
-            table.setItem(row_index, 5, QTableWidgetItem(f"{total_paid:,.2f} ج.م"))
-            rem_item = QTableWidgetItem(f"{remaining:,.2f} ج.م")
-            rem_item.setForeground(QColor("#388e3c") if remaining <= 0 else QColor("#d32f2f"))
-            table.setItem(row_index, 6, rem_item)
-            table.setItem(row_index, 7, QTableWidgetItem(str(invoice_id)))
-            status_item = QTableWidgetItem("مسدد" if remaining <= 0 else "غير مسدد")
-            status_item.setForeground(QColor("#388e3c") if remaining <= 0 else QColor("#d32f2f"))
-            table.setItem(row_index, 8, status_item)
-
-            # Actions (go to payments/details)
-            w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0,0,0,0); h.setSpacing(6)
-            btn_open = QPushButton(); btn_open.setIcon(icon("payments.svg")); btn_open.setToolTip("عرض التفاصيل والدفعات")
-            btn_open.setProperty("class","table-action"); btn_open.setFlat(True); btn_open.setIconSize(QSize(18,18)); btn_open.setFixedSize(30,30)
-            btn_open.clicked.connect(functools.partial(self.view_invoice_payments, invoice_id, cust_name, prod_name))
-            h.addWidget(btn_open)
-            btn_view = QPushButton(); btn_view.setIcon(icon("reports.svg")); btn_view.setToolTip("عرض الفاتورة")
-            btn_view.setProperty("class","table-action"); btn_view.setFlat(True); btn_view.setIconSize(QSize(18,18)); btn_view.setFixedSize(30,30)
-            btn_view.clicked.connect(functools.partial(self.show_invoice_details, invoice_id))
-            h.addWidget(btn_view)
-            table.setCellWidget(row_index, 9, w)
-
-            # Overdue highlight
-            if next_due and QDate.fromString(next_due, "yyyy-MM-dd") < QDate.currentDate() and remaining > 0:
-                for col in range(table.columnCount()):
-                    if table.item(row_index, col):
-                        table.item(row_index, col).setBackground(QColor(255, 200, 200))
-            row_index += 1
+                    # Create action buttons
+                    w = QWidget()
+                    h = QHBoxLayout(w)
+                    h.setContentsMargins(5, 2, 5, 2)
+                    h.setSpacing(5)
+                    
+                    # View payments button
+                    btn_open = QPushButton()
+                    btn_open.setIcon(icon("payments.svg"))
+                    btn_open.setToolTip("عرض التفاصيل والدفعات")
+                    btn_open.setProperty("class", "table-action")
+                    btn_open.setFlat(True)
+                    btn_open.setIconSize(QSize(16, 16))
+                    btn_open.setFixedSize(28, 28)
+                    btn_open.clicked.connect(functools.partial(self.view_invoice_payments, invoice_id, cust_name, prod_name))
+                    h.addWidget(btn_open)
+                    
+                    # View invoice button
+                    btn_view = QPushButton()
+                    btn_view.setIcon(icon("reports.svg"))
+                    btn_view.setToolTip("عرض الفاتورة")
+                    btn_view.setProperty("class", "table-action")
+                    btn_view.setFlat(True)
+                    btn_view.setIconSize(QSize(16, 16))
+                    btn_view.setFixedSize(28, 28)
+                    btn_view.clicked.connect(functools.partial(self.show_invoice_details, invoice_id))
+                    h.addWidget(btn_view)
+                    
+                    h.addStretch()
+                    table.setCellWidget(row_index, 9, w)
+                    
+                    # Highlight overdue installments
+                    if next_due and QDate.fromString(next_due, "yyyy-MM-dd") < QDate.currentDate() and remaining > 0:
+                        for col in range(table.columnCount()):
+                            if table.item(row_index, col):
+                                table.item(row_index, col).setBackground(QColor(255, 200, 200))
+                    
+                    row_index += 1
+                    
+                except Exception as e:
+                    print(f"Error processing installment row: {e}")
+                    continue
+                    
+        except Exception as e:
+            print(f"Error in refresh_installments: {e}")
+            import traceback
+            traceback.print_exc()
 
         # 2) Orphan installments (no invoice_id): show individually as before
         orphan_query = f"""
@@ -1583,62 +1641,64 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
 
     def delete_invoice(self, invoice_id):
         """Delete an invoice after confirmation"""
-        # Get invoice details for confirmation message
-        invoice = Database().fetch_one(
-            """
-            SELECT i.id, c.name, p.name, i.total_amount
-            FROM invoices i
-            LEFT JOIN customers c ON i.customer_id = c.id
-            LEFT JOIN products p ON i.product_id = p.id
-            WHERE i.id = ?
-            """,
-            (invoice_id,)
-        )
-        
-        if not invoice:
-            QMessageBox.warning(self, "خطأ", "تعذر العثور على الفاتورة المحددة.")
-            return
+        try:
+            # Get invoice details for confirmation message
+            invoice_rows = Database().fetch_all(
+                """
+                SELECT i.id, c.name, p.name, i.total_amount, i.quantity, i.product_id
+                FROM invoices i
+                LEFT JOIN customers c ON i.customer_id = c.id
+                LEFT JOIN products p ON i.product_id = p.id
+                WHERE i.id = ?
+                """,
+                (invoice_id,)
+            )
             
-        # Show confirmation dialog
-        reply = QMessageBox.question(
-            self,
-            'تأكيد الحذف',
-            f'هل أنت متأكد من حذف الفاتورة رقم {invoice[0]} للعميل {invoice[1]} بقيمة {invoice[3]:,.2f} ج.م؟\n\n' 
-            'سيتم حذف جميع المدفوعات المرتبطة بهذه الفاتورة أيضاً.',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            try:
-                # Start transaction
-                Database().execute("BEGIN TRANSACTION")
+            if not invoice_rows:
+                QMessageBox.warning(self, "خطأ", "تعذر العثور على الفاتورة المحددة.")
+                return
                 
-                # Delete related payments first (due to foreign key constraint)
+            invoice = invoice_rows[0]  # Get first row from results
+            
+            # Show confirmation dialog
+            reply = QMessageBox.question(
+                self,
+                'تأكيد الحذف',
+                f'هل أنت متأكد من حذف الفاتورة رقم {invoice[0]} للعميل {invoice[1]} بقيمة {invoice[3]:,.2f} ج.م؟\n\n' 
+                'سيتم حذف جميع المدفوعات المرتبطة بهذه الفاتورة أيضاً.',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                # First, delete related payments
                 Database().execute("DELETE FROM payments WHERE invoice_id = ?", (invoice_id,))
                 
-                # Delete the invoice
+                # Then delete the invoice
                 Database().execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
                 
-                # Commit transaction
-                Database().execute("COMMIT")
+                # Return the product quantity to stock
+                if invoice[4] and invoice[5]:  # if quantity and product_id exist
+                    Database().execute(
+                        "UPDATE products SET stock = stock + ? WHERE id = ?",
+                        (invoice[4], invoice[5])
+                    )
                 
                 # Refresh UI
                 self.refresh_invoices()
                 self.refresh_dashboard_cards()
                 self.refresh_reports_table()
                 self.refresh_alerts()
+                self.refresh_products()
                 
                 QMessageBox.information(self, "تم الحذف", "تم حذف الفاتورة بنجاح.")
-                
-            except Exception as e:
-                # Rollback in case of error
-                Database().execute("ROLLBACK")
-                QMessageBox.critical(
-                    self,
-                    "خطأ",
-                    f"حدث خطأ أثناء حذف الفاتورة:\n{str(e)}"
-                )
+                        
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "خطأ",
+                f"حدث خطأ أثناء معالجة طلب الحذف:\n{str(e)}"
+            )
 
     def refresh_invoices(self):
         try:
@@ -1687,7 +1747,11 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
                 "العمليات"
             ]
             
-            # Set column widths to prevent overlapping
+            # First set the column count and headers
+            table.setColumnCount(len(headers))
+            table.setHorizontalHeaderLabels(headers)
+            
+            # Then set column widths
             table.setColumnWidth(0, 150)  # Customer
             table.setColumnWidth(1, 150)  # Product
             table.setColumnWidth(2, 80)   # Quantity
@@ -1698,8 +1762,6 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
             table.setColumnWidth(7, 120)  # Invoice date
             table.setColumnWidth(8, 100)  # Remaining
             table.setColumnWidth(9, 300)  # Operations (wider to fit all buttons)
-            table.setColumnCount(len(headers))
-            table.setHorizontalHeaderLabels(headers)
             
             # Set alignment and styling for the table
             table.setStyleSheet("""
@@ -1737,18 +1799,24 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
                     total_amount = float(row[4] or 0)  # Total amount is at index 4
                     upfront_paid = float(row[5] or 0)  # Upfront paid is at index 5
                     
-                    # Calculate total paid amount from payments table
-                    paid_sum_result = Database().fetch_all(
-                        "SELECT IFNULL(SUM(amount), 0) FROM payments WHERE invoice_id=?", 
+                    # Get all payments for this invoice
+                    payments_result = Database().fetch_all(
+                        """
+                        SELECT COALESCE(SUM(amount), 0) 
+                        FROM payments 
+                        WHERE invoice_id = ?
+                        """, 
                         (invoice_id,)
                     )
-                    paid_sum = float(paid_sum_result[0][0]) if paid_sum_result and paid_sum_result[0][0] is not None else 0.0
                     
-                    # Calculate remaining amount (total_amount - upfront_paid - paid_sum)
-                    remaining = max(0, total_amount - upfront_paid - paid_sum)
+                    # Get the total payments sum
+                    total_paid = float(payments_result[0][0] or 0) if payments_result else 0.0
+                    
+                    # Calculate remaining amount (total_amount - total_paid)
+                    remaining = max(0, total_amount - total_paid)
                     
                     # Debug print to verify calculations
-                    print(f"Invoice {invoice_id}: Total={total_amount}, Upfront={upfront_paid}, Paid={paid_sum}, Remaining={remaining}")
+                    print(f"Invoice {invoice_id}: Total={total_amount}, Upfront={upfront_paid}, Paid={total_paid}, Remaining={remaining}")
                     
                     # Add new row to table
                     table.insertRow(r)
@@ -1806,33 +1874,37 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
                     table.setItem(r, 8, remaining_item)
                     
                     # Debug information
-                    print(f"Invoice ID: {invoice_id}, Total: {total_amount}, Upfront: {upfront_paid}, Paid: {paid_sum}, Remaining: {remaining}")
+                    print(f"Invoice ID: {invoice_id}, Total: {total_amount}, Upfront: {upfront_paid}, Paid: {total_paid}, Remaining: {remaining}")
                     
                     # Create action buttons container with smaller font
                     btn_widget = QWidget()
+                    btn_widget.setObjectName(f"btn_widget_{invoice_id}")
                     btn_widget.setStyleSheet("""
                         QWidget {
                             background: transparent;
-                            font-size: 13px;  /* Smaller font for operations */
+                            font-size: 13px;
+                            margin: 0;
+                            padding: 0;
                         }
                     """)
                     btn_layout = QHBoxLayout(btn_widget)
-                    btn_layout.setContentsMargins(2, 2, 2, 2)
-                    btn_layout.setSpacing(4)
+                    btn_layout.setContentsMargins(5, 2, 5, 2)
+                    btn_layout.setSpacing(6)
+                    btn_layout.setAlignment(Qt.AlignCenter)
                     
                     # Common button style with smaller font
                     button_style = """
                         QPushButton {
                             border: 1px solid #e0e0e0;
                             border-radius: 6px;
-                            padding: 6px 12px;
-                            min-width: 80px;
-                            max-width: 80px;
-                            min-height: 32px;
-                            max-height: 32px;
-                            font-size: 12px;  /* Slightly smaller font for buttons */
+                            padding: 6px 8px;
+                            min-width: 70px;
+                            max-width: 70px;
+                            min-height: 30px;
+                            max-height: 30px;
+                            font-size: 11px;
                             font-weight: bold;
-                            margin: 2px;
+                            margin: 1px;
                             text-align: center;
                         }
                         QPushButton:hover {
@@ -1843,6 +1915,9 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
                         QPushButton:pressed {
                             position: relative;
                             top: 1px;
+                        }
+                        QPushButton:disabled {
+                            opacity: 0.6;
                         }
                     """
                     
@@ -1923,12 +1998,23 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
                     btn_layout.addWidget(btn_delete)
                     btn_layout.addStretch()
                     
+                    # Ensure the table has enough columns
+                    if table.columnCount() <= 9:
+                        table.setColumnCount(10)
+                    
                     # Set the widget in the operations column (last column)
                     operations_col = 9  # 10th column (0-based index 9)
-                    table.setCellWidget(r, operations_col, btn_widget)
                     
-                    # Set row height to accommodate larger buttons
-                    table.setRowHeight(r, 60)
+                    # Make sure the column exists
+                    if operations_col < table.columnCount():
+                        table.setCellWidget(r, operations_col, btn_widget)
+                    
+                    # Set row height to accommodate buttons
+                    table.setRowHeight(r, 50)
+                    
+                    # Make sure the row is properly added
+                    if r >= table.rowCount():
+                        table.insertRow(r)
             
                 except Exception as e:
                     print(f"Error processing invoice row {r}: {str(e)}")
@@ -1943,20 +2029,19 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
         
         # Set column resize modes
         header = table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # ID column
-        header.setSectionResizeMode(1, QHeaderView.Stretch)  # Customer name column
-        header.setSectionResizeMode(2, QHeaderView.Stretch)  # Product name column
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Quantity
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Total
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Upfront paid
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Installment count
-        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Start date
-        header.setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Invoice date
-        header.setSectionResizeMode(9, QHeaderView.ResizeToContents)  # Remaining
-        header.setSectionResizeMode(10, QHeaderView.ResizeToContents)  # Actions
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Customer
+        header.setSectionResizeMode(1, QHeaderView.Stretch)  # Product
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Quantity
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Total
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Upfront paid
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Installment count
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Start date
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Invoice date
+        header.setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Remaining
+        header.setSectionResizeMode(9, QHeaderView.ResizeToContents)  # Operations
         
-        # Set minimum width for action column to prevent button squishing
-        table.setColumnWidth(10, 200)  # Set fixed width for action column
+        # Set minimum width for operations column to prevent button squishing
+        table.setColumnWidth(9, 300)  # Set fixed width for operations column
         
         # Set default row height
         table.verticalHeader().setDefaultSectionSize(60)
@@ -1978,52 +2063,96 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
         if not row: return
         old = {"name": row[0][0], "phone": row[0][1], "note": row[0][2]}
         dlg = CustomerDialog(self, "تعديل عميل", old)
-        if dlg.exec() == QDialog.Accepted:
-            data = dlg.get_data(); Database().execute("UPDATE customers SET name=?,phone=?,note=? WHERE id=?", (data["name"],data["phone"],data["note"], cid))
-            self.refresh_customers(); self.refresh_dashboard_cards(); self.refresh_alerts(); self.refresh_reports_table()
-
-    def delete_customer(self, cid):
-        if QMessageBox.question(self,"تأكيد","هل تريد حذف هذا العميل؟") != QMessageBox.Yes: return
-        Database().execute("DELETE FROM customers WHERE id=?", (cid,))
-        self.refresh_customers(); self.refresh_installments(); self.refresh_alerts(); self.refresh_dashboard_cards(); self.refresh_reports_table()
 
     def add_product(self):
         dlg = ProductDialog(self)
         if dlg.exec() == QDialog.Accepted:
             data = dlg.get_data()
             if not data["name"]:
-                QMessageBox.warning(self,"تنبيه","الاسم مطلوب"); return
-            Database().execute("INSERT INTO products (name,price,stock) VALUES (?,?,?)", (data["name"],data["price"],data["stock"]))
-            self.refresh_products(); self.refresh_dashboard_cards(); self.refresh_alerts(); self.refresh_reports_table()
+                QMessageBox.warning(self,"تنبيه","الاسم مطلوب")
+                return
+            Database().execute("INSERT INTO products (name,price,stock) VALUES (?,?,?)", 
+                             (data["name"], data["price"], data["stock"]))
+            self.refresh_products()
+            self.refresh_dashboard_cards()
+            self.refresh_alerts()
+            self.refresh_reports_table()
 
     def edit_product(self, pid):
         row = Database().fetch_all("SELECT name,price,stock FROM products WHERE id=?", (pid,))
-        if not row: return
+        if not row: 
+            return
         old = {"name": row[0][0], "price": row[0][1], "stock": row[0][2]}
         dlg = ProductDialog(self, "تعديل منتج", old)
         if dlg.exec() == QDialog.Accepted:
-            data = dlg.get_data(); Database().execute("UPDATE products SET name=?,price=?,stock=? WHERE id=?", (data["name"],data["price"],data["stock"], pid))
-            self.refresh_products(); self.refresh_dashboard_cards(); self.refresh_alerts(); self.refresh_reports_table()
+            data = dlg.get_data()
+            Database().execute("UPDATE products SET name=?,price=?,stock=? WHERE id=?", 
+                             (data["name"], data["price"], data["stock"], pid))
+            self.refresh_products()
+            self.refresh_dashboard_cards()
+            self.refresh_alerts()
+            self.refresh_reports_table()
+
+    def delete_customer(self, cid):
+        try:
+            # Check if customer has any invoices first
+            invoice_count = Database().fetch_one(
+                "SELECT COUNT(*) FROM invoices WHERE customer_id=?", (cid,)
+            )
+            if invoice_count and invoice_count[0] > 0:
+                QMessageBox.warning(
+                    self,
+                    "خطأ",
+                    "لا يمكن حذف العميل لأنه لديه فواتير مرتبطة. الرجاء حذف الفواتير أولاً."
+                )
+                return
+                
+            if QMessageBox.question(
+                self,
+                "تأكيد الحذف",
+                "هل أنت متأكد من حذف هذا العميل؟",
+                QMessageBox.Yes | QMessageBox.No
+            ) == QMessageBox.Yes:
+                Database().execute("DELETE FROM customers WHERE id=?", (cid,))
+                self.refresh_customers()
+                self.refresh_installments()
+                self.refresh_alerts()
+                self.refresh_dashboard_cards()
+                self.refresh_reports_table()
+                QMessageBox.information(self, "تم", "تم حذف العميل بنجاح")
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"حدث خطأ أثناء حذف العميل: {str(e)}")
 
     def delete_product(self, pid):
-        if QMessageBox.question(self,"تأكيد","هل تريد حذف هذا المنتج؟") != QMessageBox.Yes: return
-        Database().execute("DELETE FROM products WHERE id=?", (pid,))
-        self.refresh_products(); self.refresh_installments(); self.refresh_alerts(); self.refresh_dashboard_cards(); self.refresh_reports_table()
-
-    def add_installment(self):
-        dlg = InstallmentDialog(self)
-        if dlg.exec() == QDialog.Accepted:
-            data = dlg.get_data()
-            if not data["customer_id"] or not data["product_id"]:
-                QMessageBox.warning(self,"تنبيه","اختر عميلًا ومنتجًا"); return
-            product_row = Database().fetch_all("SELECT stock FROM products WHERE id=?", (data["product_id"],))
-            if not product_row or product_row[0][0] < 1:
-                QMessageBox.warning(self,"تنبيه","لا توجد كمية كافية من المنتج"); return
-            Database().execute("UPDATE products SET stock = stock - 1 WHERE id=?", (data["product_id"],))
-            Database().execute("INSERT INTO installments (customer_id,product_id,due_date,amount,paid) VALUES (?,?,?,?,?)",
-                             (data["customer_id"],data["product_id"],data["due_date"],data["amount"],0))
-            self.refresh_installments(); self.refresh_alerts(); self.refresh_dashboard_cards(); self.refresh_reports_table()
-
+        try:
+            # Check if product has any invoices first
+            invoice_count = Database().fetch_one(
+                "SELECT COUNT(*) FROM invoices WHERE product_id=?", (pid,)
+            )
+            if invoice_count and invoice_count[0] > 0:
+                QMessageBox.warning(
+                    self,
+                    "خطأ",
+                    "لا يمكن حذف المنتج لأنه مستخدم في فواتير. الرجاء حذف الفواتير أولاً."
+                )
+                return
+                
+            if QMessageBox.question(
+                self,
+                "تأكيد الحذف",
+                "هل أنت متأكد من حذف هذا المنتج؟",
+                QMessageBox.Yes | QMessageBox.No
+            ) == QMessageBox.Yes:
+                Database().execute("DELETE FROM products WHERE id=?", (pid,))
+                self.refresh_products()
+                self.refresh_installments()
+                self.refresh_alerts()
+                self.refresh_dashboard_cards()
+                self.refresh_reports_table()
+                QMessageBox.information(self, "تم", "تم حذف المنتج بنجاح")
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"حدث خطأ أثناء حذف المنتج: {str(e)}")
+            
     def add_invoice(self):
         dlg = InvoiceDialog(self)
         if dlg.exec() == QDialog.Accepted:
@@ -2031,9 +2160,11 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
             # stock check
             stock = Database().fetch_all("SELECT stock FROM products WHERE id=?", (data["product_id"],))
             if not stock or stock[0][0] < data["quantity"]:
-                QMessageBox.warning(self,"تنبيه","لا توجد كمية كافية من المنتج"); return
+                QMessageBox.warning(self,"تنبيه","لا توجد كمية كافية من المنتج")
+                return
             # subtract stock
-            Database().execute("UPDATE products SET stock = stock - ? WHERE id=?", (data["quantity"], data["product_id"]))
+            Database().execute("UPDATE products SET stock = stock - ? WHERE id=?", 
+                             (data["quantity"], data["product_id"]))
             # insert invoice with upfront payment and invoice date
             Database().execute(
                 """INSERT INTO invoices 
@@ -2082,59 +2213,33 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
                      float(data["upfront_paid"]), "دفعة مقدمة")
                 )
             # refresh everything
-            self.refresh_products(); self.refresh_invoices(); self.refresh_alerts(); self.refresh_dashboard_cards(); self.refresh_reports_table()
+            self.refresh_products()
+            self.refresh_invoices()
+            self.refresh_alerts()
+            self.refresh_dashboard_cards()
+            self.refresh_reports_table()
             QMessageBox.information(self,"نجح","تم إنشاء الفاتورة والأقساط بنجاح")
             # انتقل إلى صفحة الفواتير بعد الإضافة
             page = self.findChild(QWidget, "page_invoices")
             if page:
                 self.switch_page(page, "الفواتير")
 
-    def open_pay_dialog(self, installment_id):
-        # fetch installment amounts
-        row = Database().fetch_all("SELECT amount, IFNULL(paid,0), IFNULL(invoice_id,0) FROM installments WHERE id=?", (installment_id,))
-        if not row: return
-        amount, paid, inv_id = float(row[0][0]), float(row[0][1]), int(row[0][2] or 0)
-        remaining = round(amount - paid, 2)
-        if remaining <= 0:
-            QMessageBox.information(self, "مكتمل", "هذا القسط مسدّد بالكامل بالفعل.")
-            return
-        
-        # Create a custom installment payment dialog
-        dlg = InstallmentPaymentDialog(installment_id, remaining, self)
-        if dlg.exec() == QDialog.Accepted:
-            amt = dlg.get_amount()
-            if amt <= 0:
-                QMessageBox.warning(self, "قيمة خاطئة", "أدخل مبلغًا أكبر من الصفر.")
-                return
-            if amt > remaining:
-                QMessageBox.warning(self, "خطأ", f"المبلغ الذي أدخلته أكبر من المتبقي ({remaining})")
-                return
-            
-            # Update the installment paid amount
-            Database().execute("UPDATE installments SET paid = IFNULL(paid,0) + ? WHERE id=?", (amt, installment_id))
-            
-            # If this installment is linked to an invoice, also record the payment
-            if inv_id:
-                Database().execute(
-                    "INSERT INTO payments (invoice_id, payment_date, amount, notes) VALUES (?,?,?,?)",
-                    (inv_id, dlg.get_payment_date(), float(amt), dlg.get_notes() or f"سداد قسط #{installment_id}")
-                )
-            
-            # Refresh all relevant data
-            self.refresh_installments()
-            self.refresh_alerts()
-            self.refresh_dashboard_cards()
-            self.refresh_reports_table()
-            self.refresh_invoices()
-
-    def mark_installment_paid(self, iid):
-        # kept for compatibility: directly open pay dialog
-        self.open_pay_dialog(iid)
-
     def delete_installment(self, iid):
-        if QMessageBox.question(self,"تأكيد","هل تريد حذف هذا القسط؟") != QMessageBox.Yes: return
-        Database().execute("DELETE FROM installments WHERE id=?", (iid,))
-        self.refresh_alerts(); self.refresh_dashboard_cards(); self.refresh_reports_table(); self.refresh_invoices()
+        try:
+            if QMessageBox.question(
+                self,
+                "تأكيد الحذف",
+                "هل أنت متأكد من حذف هذا القسط؟",
+                QMessageBox.Yes | QMessageBox.No
+            ) == QMessageBox.Yes:
+                Database().execute("DELETE FROM installments WHERE id=?", (iid,))
+                self.refresh_alerts()
+                self.refresh_dashboard_cards()
+                self.refresh_reports_table()
+                self.refresh_invoices()
+                QMessageBox.information(self, "تم", "تم حذف القسط بنجاح")
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"حدث خطأ أثناء حذف القسط: {str(e)}")
 
     def show_invoice_for_installment(self, invoice_id):
         if not invoice_id:
@@ -2162,13 +2267,29 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
             # Record the payment
             try:
                 db = Database()
+                
+                # Start a transaction
+                db.conn.execute('BEGIN TRANSACTION')
+                
+                # Get invoice details including upfront payment
+                invoice_result = db.fetch_all(
+                    "SELECT total_amount, upfront_paid FROM invoices WHERE id = ?",
+                    (invoice_id,)
+                )
+                
+                if not invoice_result:
+                    raise Exception("الفاتورة غير موجودة")
+                
+                total_amount = float(invoice_result[0][0] or 0)
+                upfront_paid = float(invoice_result[0][1] or 0)
+                
+                # Record the payment
                 db.execute(
                     "INSERT INTO payments (invoice_id, amount, payment_date, notes) VALUES (?, ?, ?, ?)",
                     (invoice_id, amount, payment_date, notes)
                 )
                 
                 # Update installment paid amounts - find the first unpaid installment
-                # First, get the first unpaid installment
                 unpaid_installment = db.fetch_all(
                     """
                     SELECT id, amount, COALESCE(paid, 0) as paid
@@ -2181,7 +2302,7 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
                 )
                 
                 if unpaid_installment and len(unpaid_installment) > 0:
-                    installment_id, installment_amount, already_paid = unpaid_installment[0]  # Get first row
+                    installment_id, installment_amount, already_paid = unpaid_installment[0]
                     new_paid_amount = min(already_paid + amount, installment_amount)
                     
                     # Update the installment
@@ -2190,12 +2311,16 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
                         (new_paid_amount, installment_id)
                     )
                 
+                # Commit the transaction
+                db.conn.commit()
+                
                 QMessageBox.information(self, "نجح", "تم تسجيل الدفعة بنجاح")
                 
-                # Refresh data
+                # Force refresh all data
                 self.refresh_invoices()
                 self.refresh_alerts()
                 self.refresh_dashboard_cards()
+                self.refresh_installments()  # Refresh installments view as well
                 
             except Exception as e:
                 QMessageBox.critical(self, "خطأ", f"تعذر تسجيل الدفعة: {e}")

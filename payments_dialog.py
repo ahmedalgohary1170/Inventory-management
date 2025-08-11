@@ -118,8 +118,8 @@ class PaymentsDialog(QDialog):
         super().__init__(parent)
         self.invoice_id = invoice_id
         self.setWindowTitle(f"إدارة دفعات الفاتورة #{invoice_id}")
-        self.resize(700, 500)
-        self.setMinimumSize(600, 400)
+        self.resize(1000, 700)  # Increased initial size
+        self.setMinimumSize(800, 600)  # Increased minimum size
         
         # Main layout
         layout = QVBoxLayout(self)
@@ -167,6 +167,10 @@ class PaymentsDialog(QDialog):
         self.payments_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.payments_table.setEditTriggers(QTableWidget.NoEditTriggers)
         
+        # Set size policy to expand
+        self.payments_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.payments_table.setMinimumHeight(300)  # Set minimum height for the table
+        
         # Buttons
         btn_layout = QHBoxLayout()
         self.btn_add_payment = QPushButton("إضافة دفعة")
@@ -185,12 +189,12 @@ class PaymentsDialog(QDialog):
         btn_layout.addWidget(self.btn_print)
         btn_layout.addWidget(self.btn_close)
         
-        # Add widgets to main layout
-        layout.addWidget(info_group)
-        layout.addWidget(summary_group)
-        layout.addWidget(QLabel("سجل المدفوعات:"))
-        layout.addWidget(self.payments_table)
-        layout.addLayout(btn_layout)
+        # Add widgets to main layout with stretch factors
+        layout.addWidget(info_group, 0)
+        layout.addWidget(summary_group, 0)
+        layout.addWidget(QLabel("سجل المدفوعات:"), 0)
+        layout.addWidget(self.payments_table, 1)  # Add stretch factor to make table expand
+        layout.addLayout(btn_layout, 0)
         
         # Connect signals
         self.btn_add_payment.clicked.connect(self.add_payment)
