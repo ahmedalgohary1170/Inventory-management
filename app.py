@@ -35,8 +35,6 @@ def load_config():
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 config = json.load(f)
                 # Ensure required keys exist
-                if 'db_path' not in config:
-                    config['db_path'] = None
                 if 'theme' not in config:
                     config['theme'] = 'light'
                 if 'font_size' not in config:
@@ -44,14 +42,17 @@ def load_config():
                 return config
         except Exception as e:
             print(f"Error loading config: {e}")
-    return {"theme": "light", "font_size": 15, "db_path": None}
+    return {"theme": "light", "font_size": 15}
 
 def save_config(conf):
     try:
+        # Remove db_path if it exists to keep config clean
+        if 'db_path' in conf:
+            del conf['db_path']
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(conf, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Error saving config: {e}")
 
 def icon(name):
     p = os.path.join(ICONS_DIR, name)
@@ -530,8 +531,15 @@ class AddInvoiceDialog(QDialog):
         }
 
 def create_tables():
+    # Set the database path before creating any Database instances
+    from database import DB_PATH as db_path
+    print(f"Using database at: {db_path}")
+    
+    # Initialize database and create tables if they don't exist
+    db = Database()
+    db.create_tables()
     # Create products table
-    Database().execute('''
+    db.execute('''
     CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
@@ -586,57 +594,14 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
         self.config = load_config()
         self.apply_theme(self.config.get("theme", "light"), self.config.get("font_size", 15))
 
-        # Handle database path
-        db_path = self.config.get("db_path")
+        # Set database path
+        from database import DB_PATH
+        print(f"Using database at: {DB_PATH}")
         
-        # If no path in config or path doesn't exist, use default hidden location
-        if not db_path or not os.path.exists(db_path):
-            # Default hidden path in user's home directory with dot prefix
-            default_hidden_dir = os.path.join(os.path.expanduser("~"), ".inventory_data")
-            os.makedirs(default_hidden_dir, exist_ok=True, mode=0o700)  # Create with secure permissions
-            
-            # Set default database path with dot prefix for the file
-            default_db_path = os.path.join(default_hidden_dir, ".installments.db")
-            
-            # If we don't have a config, ask the user if they want to use the default location
-            if not db_path:
-                reply = QMessageBox.question(
-                    self, 
-                    "تأكيد الموقع الافتراضي",
-                    "سيتم حفظ قاعدة البيانات في موقع مخفي افتراضي. هل تريد المتابعة؟\n"
-                    f"المسار: {default_db_path}\n\n"
-                    "لاختيار موقع آخر، انقر على 'لا' وحدد الموقع المطلوب.",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.Yes
-                )
-                
-                if reply == QMessageBox.Yes:
-                    db_path = default_db_path
-                    # Save the path in config
-                    self.config["db_path"] = db_path
-                    save_config(self.config)
-            
-            # If user wants to choose a different location
-            if not db_path or not os.path.exists(db_path):
-                from db_path_dialog import DbPathDialog
-                db_path = DbPathDialog.get_database_path(self)
-                if not db_path:  # User cancelled
-                    QMessageBox.critical(self, "خطأ", "يجب تحديد موقع قاعدة البيانات للمتابعة.")
-                    sys.exit(1)
-                
-                # Save the selected path in config
-                db_path = os.path.abspath(db_path)
-                self.config["db_path"] = db_path
-                save_config(self.config)
-        
-        # Ensure the directory exists and has correct permissions
-        db_dir = os.path.dirname(db_path)
-        if not os.path.exists(db_dir):
-            os.makedirs(db_dir, exist_ok=True, mode=0o700)
-        
-        # Set the database path before initializing
-        from database import Database
-        Database.set_db_path(db_path)
+        # Ensure the directory exists
+        db_dir = os.path.dirname(DB_PATH)
+        if db_dir and not os.path.exists(db_dir):
+            os.makedirs(db_dir, exist_ok=True)
         
         # Initialize database and create tables
         try:
@@ -2060,9 +2025,21 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
 
     def edit_customer(self, cid):
         row = Database().fetch_all("SELECT name,phone,note FROM customers WHERE id=?", (cid,))
-        if not row: return
+        if not row: 
+            return
         old = {"name": row[0][0], "phone": row[0][1], "note": row[0][2]}
         dlg = CustomerDialog(self, "تعديل عميل", old)
+        if dlg.exec() == QDialog.Accepted:
+            data = dlg.get_data()
+            Database().execute(
+                "UPDATE customers SET name=?, phone=?, note=? WHERE id=?", 
+                (data["name"], data["phone"], data["note"], cid)
+            )
+            self.refresh_customers()
+            self.refresh_installments()
+            self.refresh_alerts()
+            self.refresh_dashboard_cards()
+            self.refresh_reports_table()
 
     def add_product(self):
         dlg = ProductDialog(self)
@@ -2095,63 +2072,85 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
 
     def delete_customer(self, cid):
         try:
+            # Get customer name for better error message
+            customer = Database().fetch_all("SELECT name FROM customers WHERE id=?", (cid,))
+            if not customer:
+                QMessageBox.warning(self, "خطأ", "العميل غير موجود")
+                return
+                
+            customer_name = customer[0][0]
+                
             # Check if customer has any invoices first
-            invoice_count = Database().fetch_one(
-                "SELECT COUNT(*) FROM invoices WHERE customer_id=?", (cid,)
+            invoice_count = Database().fetch_all(
+                "SELECT COUNT(*) as count FROM invoices WHERE customer_id=?", (cid,)
             )
-            if invoice_count and invoice_count[0] > 0:
+            if invoice_count and invoice_count[0][0] > 0:
                 QMessageBox.warning(
                     self,
                     "خطأ",
-                    "لا يمكن حذف العميل لأنه لديه فواتير مرتبطة. الرجاء حذف الفواتير أولاً."
+                    f"لا يمكن حذف العميل '{customer_name}' لأنه لديه فواتير مرتبطة.\nالرجاء حذف الفواتير أولاً."
                 )
                 return
                 
-            if QMessageBox.question(
+            reply = QMessageBox.question(
                 self,
                 "تأكيد الحذف",
-                "هل أنت متأكد من حذف هذا العميل؟",
-                QMessageBox.Yes | QMessageBox.No
-            ) == QMessageBox.Yes:
+                f"هل أنت متأكد من حذف العميل '{customer_name}'؟",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
                 Database().execute("DELETE FROM customers WHERE id=?", (cid,))
                 self.refresh_customers()
                 self.refresh_installments()
                 self.refresh_alerts()
                 self.refresh_dashboard_cards()
                 self.refresh_reports_table()
-                QMessageBox.information(self, "تم", "تم حذف العميل بنجاح")
+                QMessageBox.information(self, "تم", f"تم حذف العميل '{customer_name}' بنجاح")
         except Exception as e:
-            QMessageBox.critical(self, "خطأ", f"حدث خطأ أثناء حذف العميل: {str(e)}")
+            QMessageBox.critical(self, "خطأ", f"حدث خطأ أثناء حذف العميل: {str(e)}\nالرجاء المحاولة مرة أخرى.")
 
     def delete_product(self, pid):
         try:
+            # Get product name for better error message
+            product = Database().fetch_all("SELECT name FROM products WHERE id=?", (pid,))
+            if not product:
+                QMessageBox.warning(self, "خطأ", "المنتج غير موجود")
+                return
+                
+            product_name = product[0][0]
+                
             # Check if product has any invoices first
-            invoice_count = Database().fetch_one(
-                "SELECT COUNT(*) FROM invoices WHERE product_id=?", (pid,)
+            invoice_count = Database().fetch_all(
+                "SELECT COUNT(*) as count FROM invoices WHERE product_id=?", (pid,)
             )
-            if invoice_count and invoice_count[0] > 0:
+            if invoice_count and invoice_count[0][0] > 0:
                 QMessageBox.warning(
                     self,
                     "خطأ",
-                    "لا يمكن حذف المنتج لأنه مستخدم في فواتير. الرجاء حذف الفواتير أولاً."
+                    f"لا يمكن حذف المنتج '{product_name}' لأنه مستخدم في فواتير.\nالرجاء حذف الفواتير أولاً."
                 )
                 return
                 
-            if QMessageBox.question(
+            reply = QMessageBox.question(
                 self,
                 "تأكيد الحذف",
-                "هل أنت متأكد من حذف هذا المنتج؟",
-                QMessageBox.Yes | QMessageBox.No
-            ) == QMessageBox.Yes:
+                f"هل أنت متأكد من حذف المنتج '{product_name}'؟",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
                 Database().execute("DELETE FROM products WHERE id=?", (pid,))
                 self.refresh_products()
                 self.refresh_installments()
                 self.refresh_alerts()
                 self.refresh_dashboard_cards()
                 self.refresh_reports_table()
-                QMessageBox.information(self, "تم", "تم حذف المنتج بنجاح")
+                QMessageBox.information(self, "تم", f"تم حذف المنتج '{product_name}' بنجاح")
         except Exception as e:
-            QMessageBox.critical(self, "خطأ", f"حدث خطأ أثناء حذف المنتج: {str(e)}")
+            QMessageBox.critical(self, "خطأ", f"حدث خطأ أثناء حذف المنتج: {str(e)}\nالرجاء المحاولة مرة أخرى.")
             
     def add_invoice(self):
         dlg = InvoiceDialog(self)

@@ -2,50 +2,41 @@ import sqlite3
 import os
 from pathlib import Path
 
-DEFAULT_DB_NAME = "installments.db"
-DB_PATH = None
+# Set your database path here
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "installments.db")
 
 class Database:
     _instance = None
     
-    @classmethod
-    def set_db_path(cls, db_path):
-        global DB_PATH
-        DB_PATH = db_path
-        # Reset the instance to force reinitialization with new path
-        cls._instance = None
+
     
     def __new__(cls, db_path=None):
         if cls._instance is None:
             cls._instance = super(Database, cls).__new__(cls)
             cls._instance.initialized = False
             
-            # Determine the database path
-            final_path = db_path or DB_PATH or DEFAULT_DB_NAME
-            final_path = os.path.abspath(final_path)
+            # Use the global DB_PATH
+            cls._instance.db_path = DB_PATH
             
             # Create parent directory if it doesn't exist
-            db_dir = os.path.dirname(final_path)
+            db_dir = os.path.dirname(DB_PATH)
             if db_dir and not os.path.exists(db_dir):
                 os.makedirs(db_dir, exist_ok=True)
-            
-            # Set the instance's db_path to the absolute path
-            cls._instance.db_path = final_path
-            cls._instance.conn = sqlite3.connect(final_path)
+                
+            cls._instance.conn = sqlite3.connect(DB_PATH)
             cls._instance.conn.row_factory = sqlite3.Row
             cls._instance.create_tables()
             cls._instance.initialized = True
             
             # Print for debugging
-            print(f"Database initialized at: {final_path}")
+            print(f"Database initialized at: {DB_PATH}")
             
         return cls._instance
         
     def __init__(self, db_path=None):
         if not self.initialized:
             # This should not normally be reached due to __new__
-            final_path = db_path or DB_PATH or DEFAULT_DB_NAME
-            self.db_path = os.path.abspath(final_path)
+            self.db_path = DB_PATH
             
             # Create parent directory if it doesn't exist
             db_dir = os.path.dirname(self.db_path)
