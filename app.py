@@ -2498,17 +2498,20 @@ def main():
     try:
         with open(QSS_LIGHT, "r", encoding="utf-8") as f: app.setStyleSheet(f.read())
     except: pass
-    win = MainApp();
+    win = MainApp()
     
-    # الحصول على أبعاد الشاشة الرئيسية
-    screen = app.primaryScreen()
-    screen_geometry = screen.geometry()
+    # الحصول على أبعاد الشاشة المتاحة
+    screen = app.primaryScreen().availableGeometry()
     
-    # تعيين حجم النافذة ليطابق أبعاد الشاشة بالضبط
-    win.resize(screen_geometry.width(), screen_geometry.height())
+    # تعيين حجم النافذة ليكون 90% من حجم الشاشة المتاح
+    width = int(screen.width() * 0.9)
+    height = int(screen.height() * 0.9)
+    win.resize(width, height)
     
-    # تعيين موقع النافذة ليكون في أعلى يسار الشاشة
-    win.move(screen_geometry.x(), screen_geometry.y())
+    # تعيين موقع النافذة ليكون في منتصف الشاشة
+    x = screen.x() + (screen.width() - width) // 2
+    y = screen.y() + (screen.height() - height) // 2
+    win.move(x, y)
     
     # عرض النافذة
     win.show()
