@@ -2500,18 +2500,20 @@ def main():
     except: pass
     win = MainApp()
     
-    # الحصول على أبعاد الشاشة المتاحة
-    screen = app.primaryScreen().availableGeometry()
+    # تعيين حجم ابتدائي للنافذة 800x800 بكسل مع إمكانية التكبير
+    width = 800
+    height = 800
+    win.setMinimumSize(width, height)  # تعيين حد أدنى للحجم
+    win.resize(width, height)  # تعيين الحجم الابتدائي
     
-    # تعيين حجم النافذة ليكون 90% من حجم الشاشة المتاح
-    width = int(screen.width() * 0.9)
-    height = int(screen.height() * 0.9)
-    win.resize(width, height)
+    # تمكين زر التكبير في شريط العنوان
+    win.setWindowFlags(win.windowFlags() | Qt.WindowMaximizeButtonHint)
     
     # تعيين موقع النافذة ليكون في منتصف الشاشة
-    # x = screen.x() + (screen.width() - width) // 2
-    # y = screen.y() + (screen.height() - height) // 2
-    # win.move(x, y)
+    screen = app.primaryScreen().availableGeometry()
+    x = (screen.width() - width) // 2
+    y = (screen.height() - height) // 2
+    win.move(x, y)
     
     # عرض النافذة
     win.show()
