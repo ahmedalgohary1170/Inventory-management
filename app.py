@@ -2509,13 +2509,14 @@ def main():
     win.resize(width, height)
     
     # تعيين موقع النافذة ليكون في منتصف الشاشة
-    x = screen.x() + (screen.width() - width) // 2
-    y = screen.y() + (screen.height() - height) // 2
-    win.move(x, y)
+    # x = screen.x() + (screen.width() - width) // 2
+    # y = screen.y() + (screen.height() - height) // 2
+    # win.move(x, y)
     
     # عرض النافذة
     win.show()
     
     sys.exit(app.exec())
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()
