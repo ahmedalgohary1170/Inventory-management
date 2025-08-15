@@ -584,10 +584,7 @@ class MainApp(QMainWindow, Ui_MainWindow):  # نبدل ترتيب الوراثة
         self.setupUi(self)
 
         # ضبط حجم النافذة حسب الشاشة الحالية
-        from PySide6.QtGui import QGuiApplication
-        screen = QGuiApplication.primaryScreen()
-        geometry = screen.availableGeometry()
-        self.setGeometry(geometry)
+
         self.setWindowTitle("معرض الحاج سيد قايد للأجهزة الحديثة")
 
         # Load config
